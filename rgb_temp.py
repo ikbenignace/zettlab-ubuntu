@@ -5,7 +5,7 @@ Reads CPU die temperature from Netdata (24h + 30d).
 Combines both windows for accurate min/max range:
   - min = min(24h_min, 30d_min) — never miss cool temps
   - max = max(24h_max, 30d_max) — capture peaks even if smoothed
-Maps current temp to a blue-to-red color gradient with intensity scaling.
+Maps current temp to a blue-to-red color gradient at constant LED_BRIGHTNESS_PCT% brightness.
 """
 
 import os
@@ -25,6 +25,8 @@ CPU_TEMP_CHART = (
 )
 HWMON_PATH = "/sys/class/hwmon/hwmon6/temp1_input"
 RGB_CONTROL = os.path.join(os.path.dirname(os.path.abspath(__file__)), "rgb_control.py")
+LED_BRIGHTNESS = 0.25  # constant brightness applied to all colors (0.0–1.0)
+LED_BRIGHTNESS_PCT = int(LED_BRIGHTNESS * 100)
 
 
 def netdata_query(chart_id: str, before: int = -2592000, after: int = 0):
@@ -96,7 +98,7 @@ def compute_color(temp: float, min_temp: float, max_temp: float):
     """Compute RGB values from temperature.
 
     Color gradient: blue (cool) -> red (hot).
-    Brightness: cool = dim, hot = 25%.
+    Brightness: LED_BRIGHTNESS_PCT% (constant).
 
     Returns (r, g, b) tuple with values 0-255.
     """
@@ -111,12 +113,9 @@ def compute_color(temp: float, min_temp: float, max_temp: float):
     g = 0
     b = int((1 - t) * 255)
 
-    # Brightness: scales with temperature, max 25%
-    # t=0 -> 10% * 0.25 = 2.5%, t=1 -> 100% * 0.25 = 25%
-    brightness = (0.1 + t * 0.9) * 0.25
-
-    r = int(r * brightness)
-    b = int(b * brightness)
+    # Brightness: LED_BRIGHTNESS_PCT%
+    r = int(r * LED_BRIGHTNESS)
+    b = int(b * LED_BRIGHTNESS)
 
     return r, g, b
 
@@ -153,7 +152,7 @@ def main():
     print(f"  Temp interval: {interval}s, Range refresh: every {range_update_interval//60}min")
     print(f"  Mode: solid (6), Color: blue(cool) -> red(hot)")
     print(f"  Range: hybrid 24h+30d Netdata (min of mins, max of maxs)")
-    print(f"  Brightness: 2.5% (cool) -> 25% (hot)")
+    print(f"  Brightness: {LED_BRIGHTNESS_PCT}%")
     print()
 
     last_range_update = time.time() - range_update_interval  # force initial read
