@@ -28,6 +28,7 @@ This table reflects the **Zettlab D6 Ultra** and **D8 Ultra** models (tested on 
 | **Fans**      | 3× PWM fans                       | 3× PWM fans                       | Controlled via `zettlab_d8_fans` DKMS module (0–183 range) |
 | **Networking**| 2× 10GbE (Realtek RTL8127)        | 2× 10GbE (Realtek RTL8127)        | Onboard NIC unstable — using USB-C Ethernet adapter instead |
 | **RGB/LED**   | USB-controlled                    | USB-controlled                    | See [RGB/LED Control](rgb-led-control.md) — protocol via `/dev/ttyACM0` |
+| **Buttons**   | Front COPY + rear RESET           | Front COPY + rear RESET           | See [Chassis Buttons](hardware-buttons.md) — `zettlab_gpio_keys` |
 
 ---
 
@@ -39,6 +40,7 @@ This table reflects the **Zettlab D6 Ultra** and **D8 Ultra** models (tested on 
 | [Kernel Parameters](kernel-parameters.md) | Centralized list of all recommended kernel parameters |
 | [Network Driver](networking-r8127.md) | Realtek r8127 status (now using USB Ethernet adapter) |
 | [Fan Control](hardware-fan-control.md) | Dynamic temperature-based fan control |
+| [Chassis Buttons](hardware-buttons.md) | COPY / RESET keys + custom action hook |
 | [BIOS Graphics Configuration](graphics-BIOS.md) | Intel Arc iGPU BIOS settings for AI workloads |
 | [Graphics Driver](graphics-iGPU.md) | Intel Arc iGPU compute/media stack |
 | [LLM Inference](llm-inference.md) | Vulkan & SYCL setup for local LLMs (llama.cpp) |
@@ -72,3 +74,4 @@ All kernel parameters are now documented in one place:
 | Module | Purpose |
 |--------|---------|
 | `zettlab-d8-fans` | Fan control |
+| `zettlab_gpio_keys` | Chassis COPY / RESET buttons |
