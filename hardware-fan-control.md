@@ -74,19 +74,19 @@ sensors
 
 ## After Kernel Updates
 
-When Ubuntu installs a new kernel, the `zettlab_d8_fans` DKMS module must be rebuilt for the new kernel version. This is the most common cause of the module not loading after `apt upgrade` (you may see `Exec format error`).
+When Ubuntu installs a new kernel, DKMS should automatically rebuild the `zettlab_d8-fans` module for the new kernel. If it doesn't (you may see `Exec format error` or fan services failing), rebuild manually:
 
 ### Recommended One-Time Setup
 
-Install the generic kernel headers package so future kernel updates can be handled more smoothly by DKMS:
+Ensure the generic kernel headers package is installed so DKMS can always build:
 
 ```bash
 sudo apt install linux-headers-generic
 ```
 
-### Normal Workflow After Kernel Updates
+### Manual Rebuild (if DKMS didn't auto-rebuild)
 
-After any kernel update, reboot into the new kernel first, then run:
+Reboot into the new kernel first, then:
 
 ```bash
 sudo dkms remove -m zettlab-d8-fans -v 0.0.1 --all
@@ -96,7 +96,7 @@ sudo modprobe zettlab_d8_fans
 sudo systemctl restart cpu-fan-curve.service hdd-fan-curve.service
 ```
 
-Then verify the module is loaded:
+Verify the module is loaded:
 
 ```bash
 lsmod | grep zettlab_d8_fans
@@ -153,7 +153,7 @@ This generates the missing files in the old headers so DKMS can build. After thi
 ```ini
 [Unit]
 Description=CPU fan control curve for Zettlab NAS
-After=multi-user.target
+After=systemd-modules-load.service multi-user.target
 
 [Service]
 Type=simple
@@ -164,6 +164,8 @@ RestartSec=2
 [Install]
 WantedBy=multi-user.target
 ```
+
+> **Note:** The `After=systemd-modules-load.service` ensures the `zettlab_d8_fans` module is loaded before the fan script starts. Without this, the service will fail because it cannot find the hwmon device.
 
 Save as `/etc/systemd/system/cpu-fan-curve.service`.
 
@@ -204,7 +206,7 @@ The script automatically detects all SATA drives (`/dev/sd[a-h]`) and monitors t
 ```ini
 [Unit]
 Description=HDD fan control curve for Zettlab NAS
-After=multi-user.target
+After=systemd-modules-load.service multi-user.target
 
 [Service]
 Type=simple
@@ -215,6 +217,8 @@ RestartSec=5
 [Install]
 WantedBy=multi-user.target
 ```
+
+> **Note:** The `After=systemd-modules-load.service` ensures the `zettlab_d8_fans` module is loaded before the fan script starts.
 
 Save as `/etc/systemd/system/hdd-fan-curve.service`.
 
@@ -281,6 +285,47 @@ echo 120 | sudo tee "$ZETTLAB/pwm3"
 
 **Optional fine-tuning**: If your CPU consistently idles 2–3 °C above target, edit `TARGET_CPU_C` in the script.
 
+## Post-Kernel-Upgrade Checklist
+
+After any kernel update, verify everything is working:
+
+```bash
+# 1. DKMS modules rebuilt?
+sudo dkms status | grep zettlab
+
+# 2. Modules loaded?
+lsmod | grep -E 'zettlab_d8_fans|zettlab_gpio_keys'
+
+# 3. hwmon device visible?
+for d in /sys/class/hwmon/hwmon*; do [ -f "$d/name" ] && echo "$(basename $d): $(cat $d/name)"; done | grep zettlab
+
+# 4. Fan services running?
+systemctl is-active cpu-fan-curve hdd-fan-curve
+
+# 5. Button service using evdev (not MMIO)?
+journalctl -u zettlab-buttons.service --no-pager -n 5 | grep "listening on"
+
+# If any step fails, restart the affected service:
+sudo systemctl restart cpu-fan-curve hdd-fan-curve zettlab-buttons
+```
+
+If DKMS auto-rebuild failed, manually rebuild:
+
+```bash
+# For fans:
+sudo dkms build -m zettlab-d8-fans -v 0.0.1
+sudo dkms install -m zettlab-d8-fans -v 0.0.1
+sudo modprobe zettlab_d8_fans
+
+# For GPIO keys:
+sudo dkms build -m zettlab-gpio-keys -v 1.0
+sudo dkms install -m zettlab-gpio-keys -v 1.0
+sudo modprobe zettlab_gpio_keys
+
+# Then restart all services:
+sudo systemctl restart cpu-fan-curve hdd-fan-curve zettlab-buttons
+```
+
 ## Safety Notes
 
 - The curves are intentionally conservative and anti-chatter focused
@@ -289,4 +334,3 @@ echo 120 | sudo tee "$ZETTLAB/pwm3"
 - All scripts include hard-coded minimum safe PWM and emergency full-speed overrides
 - If any temperature sensor fails, the system forces full speed (183 PWM)
 - Timer-based hysteresis prevents frequent speed adjustments after any upward change
-```

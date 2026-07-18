@@ -67,7 +67,34 @@ B: KEY=c
 
 `KEY=c` means both `KEY_1` and `KEY_2` are advertised.
 
-### Optional: load on every boot
+### Optional: DKMS (recommended — auto-rebuilds on kernel updates)
+
+Instead of manually building after every kernel update, install the module as a DKMS package:
+
+```bash
+sudo mkdir -p /usr/src/zettlab-gpio-keys-1.0
+sudo cp zettlab_gpio_keys.c /usr/src/zettlab-gpio-keys-1.0/
+sudo bash -c 'cat > /usr/src/zettlab-gpio-keys-1.0/Makefile << "EOF"
+obj-m += zettlab_gpio_keys.o
+EOF'
+sudo bash -c 'cat > /usr/src/zettlab-gpio-keys-1.0/dkms.conf << "EOF"
+PACKAGE_NAME="zettlab-gpio-keys"
+PACKAGE_VERSION="1.0"
+
+BUILT_MODULE_NAME[0]="zettlab_gpio_keys"
+DEST_MODULE_LOCATION[0]="/extra"
+
+AUTOINSTALL="yes"
+EOF'
+
+sudo dkms add -m zettlab-gpio-keys -v 1.0
+sudo dkms install -m zettlab-gpio-keys -v 1.0
+sudo modprobe zettlab_gpio_keys
+```
+
+DKMS will automatically rebuild this module whenever a new kernel is installed.
+
+### Optional: load on every boot (manual method)
 
 ```bash
 cd /path/to/zettlab-ubuntu/zettlab-gpio-keys
@@ -77,7 +104,7 @@ sudo depmod -a
 echo zettlab_gpio_keys | sudo tee /etc/modules-load.d/zettlab_gpio_keys.conf
 ```
 
-After a kernel upgrade, rebuild in `zettlab-gpio-keys/` for the new headers (same pattern as other out-of-tree modules).
+> **Note:** The manual method requires rebuilding after every kernel upgrade. Using DKMS (above) is preferred for long-term maintenance.
 
 ## Step 2: Verify Button Events
 
@@ -152,21 +179,20 @@ Create `/etc/systemd/system/zettlab-buttons.service`:
 ```ini
 [Unit]
 Description=Zettlab chassis button hook
-After=multi-user.target
-# If you load the module via modules-load.d, it is already present by this point.
+After=systemd-modules-load.service
+Wants=systemd-modules-load.service
 
 [Service]
 Type=simple
 ExecStart=/usr/local/sbin/button-hook.py --cmd /usr/local/bin/my-copy-action.sh
 Restart=always
 RestartSec=2
-# Optional: run as a dedicated user in group "input" instead of root
-# User=henry
-# Group=input
 
 [Install]
 WantedBy=multi-user.target
 ```
+
+> **Note:** The `After=systemd-modules-load.service` ensures the `zettlab_gpio_keys` module is loaded before the button hook starts. Without this, the service falls back to MMIO polling (`/dev/mem`) as a workaround.
 
 Enable:
 
@@ -194,14 +220,41 @@ sudo usermod -aG input $USER
 | `button-hook.py` | Userspace command runner |
 | `hardware-buttons.md` | This guide |
 
+## Post-Kernel-Upgrade Checklist
+
+After any kernel update, verify:
+
+```bash
+# 1. Module loaded?
+lsmod | grep zettlab_gpio_keys
+
+# 2. Button service using evdev (not MMIO)?
+journalctl -u zettlab-buttons.service --no-pager -n 5 | grep "listening on"
+
+# 3. If not, restart the service:
+sudo systemctl restart zettlab-buttons.service
+```
+
+If DKMS auto-rebuild failed, manually rebuild:
+
+```bash
+cd ~/projects/zettlab-ubuntu/zettlab-gpio-keys
+sudo make clean && sudo make
+sudo cp zettlab_gpio_keys.ko /lib/modules/$(uname -r)/extra/
+sudo depmod -a
+sudo modprobe zettlab_gpio_keys
+sudo systemctl restart zettlab-buttons.service
+```
+
 ## Troubleshooting
 
 | Symptom | Check |
 |---------|--------|
-| `insmod` fails with `Invalid module format` | Rebuild with headers matching `uname -r` |
+| `insmod` / `modprobe` fails with `Invalid module format` | Rebuild with headers matching `uname -r`, or use DKMS |
+| `modprobe` fails with `Exec format error` | Module was built for wrong kernel version; rebuild via DKMS or `make` against new headers |
 | No `zettlab-gpio-keys` in `/proc/bus/input/devices` | Module not loaded: `lsmod \| grep zettlab_gpio` |
 | `evtest` shows no KEY_1 on COPY | Confirm you are testing the `zettlab-gpio-keys` device, not a USB keyboard |
-| Hook says device not found | Load the module first; match `--device-name zettlab-gpio-keys` |
+| Hook says device not found; falls back to MMIO | The module loaded after the service started — check `After=systemd-modules-load.service` in the unit file |
 | Permission denied opening `/dev/input/event*` | Use `sudo` or add user to group `input` |
 | COPY works once then not again | Ensure your `--cmd` script exits; the hook only fires on press edges |
 

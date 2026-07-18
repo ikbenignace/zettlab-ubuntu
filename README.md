@@ -74,4 +74,6 @@ All kernel parameters are now documented in one place:
 | Module | Purpose |
 |--------|---------|
 | `zettlab-d8-fans` | Fan control |
-| `zettlab_gpio_keys` | Chassis COPY / RESET buttons |
+| `zettlab-gpio-keys` | Chassis COPY / RESET buttons (input device) |
+
+> **Note:** Both DKMS modules auto-rebuild when a new kernel is installed via `apt upgrade`. If you ever see the services fail after a kernel update, run `sudo dkms build -m <module> -v <version>` and `sudo modprobe <module_name>` to load them.
