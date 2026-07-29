@@ -43,7 +43,7 @@ This table reflects the **Zettlab D6 Ultra** and **D8 Ultra** models (tested on 
 | [Chassis Buttons](hardware-buttons.md) | COPY / RESET keys + custom action hook |
 | [BIOS Graphics Configuration](graphics-BIOS.md) | Intel Arc iGPU BIOS settings for AI workloads |
 | [Graphics Driver](graphics-iGPU.md) | Intel Arc iGPU compute/media stack |
-| [LLM Inference](llm-inference.md) | llama.cpp on Arc iGPU — SYCL preferred, Vulkan fallback, 32k launchers |
+| [LLM Inference](llm-inference.md) | llama.cpp on Arc iGPU (SYCL preferred, Vulkan fallback) |
 | [Audio Configuration](audio-HDA-driver.md) | Fixing "Dummy Output" issue |
 | [Storage Pool](storage-mergerfs-snapraid.md) | mergerfs + SnapRAID configuration |
 | [Btrfs Data Replication](btrfs-data-replication.md) | Dedicated `/data` subvolume + btrbk snapshot replication to parity disk |
