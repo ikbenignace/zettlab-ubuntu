@@ -79,7 +79,7 @@ Expected: Driver: Intel iHD driver.
 ls -l /dev/dri/
 ```
 
-Expected: `card0` and `renderD128` present.
+Expected: a `card*` node (often `card1` on this host) and `renderD128` present.
 
 ## Optional: Real-time GPU Monitor
 
