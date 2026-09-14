@@ -404,6 +404,55 @@ sudo modprobe zettlab_gpio_keys
 sudo systemctl restart cpu-fan-curve hdd-fan-curve zettlab-buttons
 ```
 
+## Power Limits Differ from the Stock Firmware
+
+Measured on the same machine, before and after replacing the vendor OS:
+
+| | Stock firmware | Ubuntu 26.04 |
+|---|---|---|
+| PL1 `long_term` | 45 W | **200 W** (32 s window) |
+| PL2 `short_term` | 93 W | 93 W (2 ms window) |
+| PL4 `peak_power` | — | 160 W |
+| Chip base power | 28 W | 28 W |
+
+200 W on a 28 W part means no meaningful cap. **PL1 is a firmware/OS setting, not a
+hardware lock**, and Ubuntu does not reproduce the vendor's 45 W. Sustained workloads
+therefore run hotter and faster than they did on the stock OS.
+
+Read yours with:
+
+```bash
+R=/sys/class/powercap/intel-rapl:0
+for i in 0 1 2; do
+  echo "$(cat $R/constraint_${i}_name): $(( $(cat $R/constraint_${i}_power_limit_uw) / 1000000 )) W"
+done
+```
+
+### Is the stock cooling enough without the cap?
+
+On a 13-minute Geekbench 6 run: peak 85 °C, average 50 °C, and the decisive number —
+
+```bash
+cat /sys/devices/system/cpu/cpu0/thermal_throttle/package_throttle_count   # 0
+```
+
+Zero throttle events against a Tjmax of 110 °C. The chassis cooling handles an
+uncapped PL1 on this part.
+
+### Restoring the vendor cap
+
+Worth doing if you want a quieter machine and care less about sustained throughput:
+
+```bash
+echo 45000000 | sudo tee /sys/class/powercap/intel-rapl:0/constraint_0_power_limit_uw
+```
+
+That does not survive a reboot. For a permanent cap, wrap it in a systemd unit ordered
+after `multi-user.target`.
+
+> Leave it open if you run LLM inference. The whole point of a long inference run is
+> sustained throughput, which is exactly what PL1 governs.
+
 ## Safety Notes
 
 - The curves are intentionally conservative and anti-chatter focused
