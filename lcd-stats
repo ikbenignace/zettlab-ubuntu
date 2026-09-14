@@ -39,8 +39,8 @@ f_drive  = F("Bold", 15)          # 41
 f_lbl    = F("SemiBold", 11)      # STORAGE / CPU / MEMORY / FANS
 f_tiny   = F("Medium", 8)         # USED / TOTAL / UTILIZATION / rpm
 f_unit   = F("SemiBold", 9)       # degrees, /28G
-f_cap    = F("Bold", 14)          # 14GB / 982GB
-f_ring   = F("Bold", 17)          # ring percentage
+f_cap    = F("Bold", 12)          # 14GB / 982GB
+f_ring   = F("Bold", 13)          # ring percentage
 
 BG        = (5, 7, 11)
 CARD      = (15, 19, 24)
@@ -346,7 +346,7 @@ def frame(dr):
         col = RED if frac > .9 else AMBER if frac > .75 else GREEN
         d.arc([rcx - rr, rcy - rr, rcx + rr, rcy + rr], -90,
               -90 + max(6, int(360 * frac)), fill=col, width=6)
-    ctext(rcx, rcy - 9, f"{frac * 100:.0f}%", f_ring, WHITE)
+    ctext(rcx, rcy - 7, f"{frac * 100:.0f}%", f_ring, WHITE)
     tx = x + 66
     d.text((tx, ROW2_T + 23), "USED", font=f_tiny, fill=GREY)
     d.text((tx, ROW2_T + 31), human(used), font=f_cap, fill=WHITE)
