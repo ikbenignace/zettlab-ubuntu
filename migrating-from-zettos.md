@@ -61,6 +61,47 @@ Shares surface under `/zettos/raid/non-snapshot/fileservice/share/Teams/<name>`,
 
 `du -sh` on `/zettos/pool/*/teams/*` gives you the honest breakdown.
 
+## Stock Firmware Reference
+
+Read from a running D6 Ultra, useful when comparing against your own machine:
+
+| | Value |
+|---|---|
+| Board / BIOS | `WY120` / `WY120V016` (2026-05-09) |
+| DMI product | `D6 Ultra`, family `ZettOS`, vendor `Zettlab` |
+| Stock kernel | `6.12.48-zettos` |
+| RAPL limits | PL1 45 W long term, PL2 93 W short term |
+| Fan driver | `zettos_pwm_fan`, a platform driver **built into the stock kernel** |
+
+### Fan interface differences
+
+The stock driver and the community [`zettlab-d8-fans`](hardware-fan-control.md) DKMS
+module expose the same three fans under different names:
+
+| | Stock `zettos_pwm_fan` | Community `zettlab_d8_fans` |
+|---|---|---|
+| PWM | `fan1_pwm` … `fan3_pwm` | `pwm1` … `pwm3` |
+| Tachometer | `fan1_input` … `fan3_input` (RPM) | — |
+
+The stock driver reports real RPM — roughly 900 rpm on the disk fans at PWM 91, and
+2800 rpm on the CPU fan at PWM 124, confirming fan3 is the CPU fan. The community
+module provides no tachometer feedback, so the fan curve scripts cannot detect a
+stalled fan. `zettlab-tui.py` in this repo handles both naming schemes and shows RPM
+when the driver offers it.
+
+### Extra temperature sensors
+
+Beyond CPU package and drive temperatures, the platform exposes DDR5 DIMM sensors
+through `spd5118` (one hwmon device per module) and Intel DPTF zones (`TCPU`,
+`TCPU_PCI`, `x86_pkg_temp`). The fan curve scripts in this repo use none of these —
+they are available if you want a more informed curve.
+
+### ACPI tables are firmware-provided
+
+`/sys/firmware/acpi/tables/` including the DSDT comes from firmware, not the OS, so it
+reads identically under any distribution. There is no need to extract it before
+reinstalling.
+
 ## Reading ZettOS Data from Ubuntu
 
 All three layers are in-tree. After installing Ubuntu on a separate drive:
