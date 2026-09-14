@@ -111,6 +111,24 @@ sudo rgb-raw.py 1 --start 0,255,0 --sweep 1,20,60,128,200,253 --hold 8
 
 Every step prints the exact frame it sent, so whatever you settle on is reproducible.
 
+### Measured behaviour
+
+Observed on a D6 Ultra, BREATHE mode, by sweeping the raw byte and watching the panel:
+
+| Speed byte | Result |
+|---|---|
+| `20` | Natural, comfortable pace — a good default |
+| `60`–`90` | Noticeably quicker; smooths out GRADIENT's colour steps |
+| `253` | Extremely fast |
+
+**Higher byte = faster.** Because `rgb_control.py` negates its argument, `speed 3`
+there becomes byte `253` — the fastest setting, which reads as a steady glow rather
+than an animation. That is the usual explanation for "the animated modes do nothing".
+
+`GRADIENT` (mode 4) renders as discrete colour stops rather than a continuous blend.
+At low speeds the individual stops are clearly visible; raising the speed makes the
+transition read as smooth.
+
 ## Brightness Control
 
 **No dedicated brightness field exists.** The protocol only accepts: `mode`, `startR/G/B`, `endR/G/B`, and `speed`. RGB values are sent as raw 8-bit bytes (0x00 = off, 0xFF = max).

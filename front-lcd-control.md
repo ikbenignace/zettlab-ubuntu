@@ -226,14 +226,23 @@ If you want the ZettOS look specifically, `zettos-lcd-display` is an LVGL app us
 `lcd-stats` draws a single-screen dashboard sized for the 640×172 landscape canvas:
 
 ```
-CPU 46 C     DISKS 44 C    sda 41  sdb 43  sdc 44   |        nas
-FANS  D1 797   D2 787   CPU 3552                    |  192.168.0.50
-      pwm 58   pwm 58   pwm 120                     |    up 0h 52m
-RAM  1.0/28G  [####------]  0.12                    |    20:19:57
+        CPU  45C                    0% |
+ ( 1% )  [####----------------------]  |        nas
+ 14GB   MEM  1.0/28G                4% |  192.168.0.50
+/982GB   [##------------------------]  |    up 1h 5m
+         sda 39 sdb 41 sdc 42 nv0 30   |
+STORAGE  nv1 38                        |   20:33:00
+         FANS  797    786    3558      |
 ```
 
-Values come from sysfs and `smartctl`; temperatures shift green → amber → red as they
-rise. Refresh interval is `INTERVAL` at the top of the script.
+A capacity arc on the left, live CPU and memory meters in the middle, every drive
+temperature below them, and identity on the right. Storage is summed across all mounted
+real filesystems (`ext4`, `xfs`, `btrfs`, `zfs`, …), deduplicated by filesystem id, so
+a pool shows up automatically once you create one.
+
+Values come from sysfs, `/proc`, and `smartctl`; temperatures shift green → amber → red
+as they rise, and the capacity arc turns amber past 75 % and red past 90 %. Refresh
+interval is `INTERVAL` at the top of the script.
 
 The drive row is **adaptive**: every SATA device found by `smartctl` plus every NVMe
 with a `hwmon` temperature is listed, six per row, wrapping to a second row — so a
