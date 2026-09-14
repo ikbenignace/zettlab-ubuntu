@@ -29,8 +29,8 @@ def F(weight, size, fallback="Bold"):
     return ImageFont.load_default()
 
 
-f_clock  = F("Bold", 24)          # 20:46
-f_host   = F("ExtraBold", 18)     # NAS
+f_clock  = F("Bold", 14)          # 20:46 — matches the IP
+f_host   = F("ExtraBold", 14)     # NAS — matches the IP
 f_ip     = F("SemiBold", 14)      # 192.168.0.50
 f_val    = F("Bold", 23)          # 45 / 1.1
 f_val_sm = F("Bold", 16)          # 0% / 4%
@@ -307,7 +307,7 @@ def frame(dr):
     hy = HEAD[1]
     d.ellipse([M + 10, hy + 12, M + 16, hy + 18], fill=GREEN)
     host = socket.gethostname().upper()
-    d.text((M + 24, hy + 7), host, font=f_host, fill=WHITE)
+    d.text((M + 24, hy + 8), host, font=f_host, fill=WHITE)
 
     bad = sum(1 for _, _, h in dr if h == "bad")
     warn = sum(1 for _, _, h in dr if h == "warn")
@@ -321,7 +321,7 @@ def frame(dr):
         d.line([(bx + 9, hy + 13), (bx + 9, hy + 16)], fill=col)
         d.text((bx + 17, hy + 10), msg, font=f_lbl, fill=col)
 
-    ctext(CW // 2, hy + 4, time.strftime("%H:%M"), f_clock, WHITE)
+    ctext(CW // 2, hy + 8, time.strftime("%H:%M"), f_clock, WHITE)
     addr = ip()
     d.ellipse([CW - M - 16, hy + 12, CW - M - 10, hy + 18], fill=GREEN)
     rtext(CW - M - 22, hy + 8, addr, f_ip, WHITE)
