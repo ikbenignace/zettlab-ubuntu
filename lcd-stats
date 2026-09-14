@@ -15,19 +15,30 @@ ROTATE = Image.ROTATE_270
 INTERVAL = 5
 SMART_EVERY = 24
 
-MONO = "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf"
-SANS = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
-F = lambda p, s: ImageFont.truetype(p, s)
-f_clock  = F(MONO, 25)
-f_host   = F(SANS, 19)
-f_ip     = F(MONO, 14)
-f_val    = F(MONO, 21)
-f_val_sm = F(MONO, 16)
-f_fan    = F(MONO, 15)
-f_drive  = F(MONO, 14)
-f_lbl    = F(SANS, 10)
-f_tiny   = F(SANS, 8)
-f_unit   = F(SANS, 9)
+# Inter matches the reference design; DejaVu is the fallback if it is absent.
+INTER = "/usr/share/fonts/opentype/inter/Inter-%s.otf"
+DEJAVU = "/usr/share/fonts/truetype/dejavu/DejaVuSans-%s.ttf"
+
+
+def F(weight, size, fallback="Bold"):
+    for path in (INTER % weight, DEJAVU % fallback):
+        try:
+            return ImageFont.truetype(path, size)
+        except OSError:
+            continue
+    return ImageFont.load_default()
+
+
+f_clock  = F("Bold", 26)          # 20:46
+f_host   = F("ExtraBold", 20)     # NAS
+f_ip     = F("SemiBold", 14)      # 192.168.0.50
+f_val    = F("Bold", 23)          # 45 / 1.1
+f_val_sm = F("Bold", 16)          # 0% / 4%
+f_fan    = F("Bold", 16)          # 797
+f_drive  = F("Bold", 15)          # 41
+f_lbl    = F("SemiBold", 11)      # STORAGE / CPU / MEMORY / FANS
+f_tiny   = F("Medium", 8)         # USED / TOTAL / UTILIZATION / rpm
+f_unit   = F("SemiBold", 9)       # degrees, /28G
 
 BG        = (5, 7, 11)
 CARD      = (15, 19, 24)
@@ -333,7 +344,7 @@ def frame(dr):
         col = RED if frac > .9 else AMBER if frac > .75 else GREEN
         d.arc([rcx - rr, rcy - rr, rcx + rr, rcy + rr], -90,
               -90 + max(6, int(360 * frac)), fill=col, width=6)
-    ctext(rcx, rcy - 9, f"{frac * 100:.0f}%", f_val_sm, WHITE)
+    ctext(rcx, rcy - 10, f"{frac * 100:.0f}%", F("Bold", 18), WHITE)
     tx = x + 66
     d.text((tx, ROW2_T + 23), "USED", font=f_tiny, fill=GREY)
     d.text((tx, ROW2_T + 31), human(used), font=f_drive, fill=WHITE)
@@ -350,9 +361,10 @@ def frame(dr):
     cv = f"{ct:.0f}" if ct else "--"
     d.text((x + 10, ROW2_T + 28), cv, font=f_val, fill=cpu_col(ct))
     d.text((x + 12 + tw(cv, f_val), ROW2_T + 38), "°C", font=f_unit, fill=cpu_col(ct))
-    d.line([(x + 74, ROW2_T + 24), (x + 74, ROW2_T + 54)], fill=DIVIDER)
-    d.text((x + 82, ROW2_T + 26), "UTIL", font=f_tiny, fill=GREY)
-    d.text((x + 82, ROW2_T + 35), f"{busy:.0f}%", font=f_val_sm, fill=WHITE)
+    dv = x + int(cw_ * 0.64)
+    d.line([(dv, ROW2_T + 24), (dv, ROW2_T + 54)], fill=DIVIDER)
+    d.text((dv + 9, ROW2_T + 26), "UTILIZATION", font=f_tiny, fill=GREY)
+    d.text((dv + 9, ROW2_T + 35), f"{busy:.0f}%", font=f_val_sm, fill=WHITE)
     bar(x + 10, ROW2_T + 62, cw_ - 20, 6, busy / 100, GREEN)
 
     # memory
@@ -364,9 +376,10 @@ def frame(dr):
     mv = f"{mu:.1f}"
     d.text((x + 10, ROW2_T + 28), mv, font=f_val, fill=WHITE)
     d.text((x + 12 + tw(mv, f_val), ROW2_T + 38), f"/{mt:.0f}G", font=f_unit, fill=GREY)
-    d.line([(x + 74, ROW2_T + 24), (x + 74, ROW2_T + 54)], fill=DIVIDER)
-    d.text((x + 82, ROW2_T + 26), "UTIL", font=f_tiny, fill=GREY)
-    d.text((x + 82, ROW2_T + 35), f"{100 * mu / mt:.0f}%", font=f_val_sm, fill=WHITE)
+    dv = x + int(cw_ * 0.64)
+    d.line([(dv, ROW2_T + 24), (dv, ROW2_T + 54)], fill=DIVIDER)
+    d.text((dv + 9, ROW2_T + 26), "UTILIZATION", font=f_tiny, fill=GREY)
+    d.text((dv + 9, ROW2_T + 35), f"{100 * mu / mt:.0f}%", font=f_val_sm, fill=WHITE)
     bar(x + 10, ROW2_T + 62, cw_ - 20, 6, mu / mt, GREEN)
 
     # fans
@@ -379,14 +392,14 @@ def frame(dr):
     for i, (lab, (rpm, pwm)) in enumerate(zip(("D1", "D2", "CPU"), fl)):
         fx = x + 9 + i * colw
         if i:
-            d.line([(fx - 5, ROW2_T + 22), (fx - 5, ROW2_T + 56)], fill=DIVIDER)
-        d.text((fx, ROW2_T + 23), lab, font=f_tiny, fill=WHITE)
-        d.text((fx, ROW2_T + 32), f"{rpm if rpm is not None else 0}",
+            d.line([(fx - 5, ROW2_T + 21), (fx - 5, ROW2_T + 53)], fill=DIVIDER)
+        d.text((fx, ROW2_T + 22), lab, font=f_tiny, fill=WHITE)
+        d.text((fx, ROW2_T + 30), f"{rpm if rpm is not None else 0}",
                font=f_fan, fill=GREEN if rpm else RED)
-        d.text((fx, ROW2_T + 49), "rpm", font=f_tiny, fill=GREY)
-    d.line([(x + 9, ROW2_T + 60), (x + cw_ - 9, ROW2_T + 60)], fill=DIVIDER)
-    ic_clock(x + 10, ROW2_T + 64)
-    d.text((x + 23, ROW2_T + 63), f"up {uptime()}", font=f_lbl, fill=WHITE)
+        d.text((fx, ROW2_T + 46), "rpm", font=f_tiny, fill=GREY)
+    d.line([(x + 9, ROW2_T + 57), (x + cw_ - 9, ROW2_T + 57)], fill=DIVIDER)
+    ic_clock(x + 10, ROW2_T + 62)
+    d.text((x + 23, ROW2_T + 61), f"up {uptime()}", font=f_lbl, fill=WHITE)
 
     # ---- row 3: one card per drive --------------------------------------
     if dr:
