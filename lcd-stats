@@ -39,6 +39,8 @@ f_drive  = F("Bold", 15)          # 41
 f_lbl    = F("SemiBold", 11)      # STORAGE / CPU / MEMORY / FANS
 f_tiny   = F("Medium", 8)         # USED / TOTAL / UTILIZATION / rpm
 f_unit   = F("SemiBold", 9)       # degrees, /28G
+f_cap    = F("Bold", 14)          # 14GB / 982GB
+f_ring   = F("Bold", 17)          # ring percentage
 
 BG        = (5, 7, 11)
 CARD      = (15, 19, 24)
@@ -344,13 +346,13 @@ def frame(dr):
         col = RED if frac > .9 else AMBER if frac > .75 else GREEN
         d.arc([rcx - rr, rcy - rr, rcx + rr, rcy + rr], -90,
               -90 + max(6, int(360 * frac)), fill=col, width=6)
-    ctext(rcx, rcy - 10, f"{frac * 100:.0f}%", F("Bold", 18), WHITE)
+    ctext(rcx, rcy - 9, f"{frac * 100:.0f}%", f_ring, WHITE)
     tx = x + 66
     d.text((tx, ROW2_T + 23), "USED", font=f_tiny, fill=GREY)
-    d.text((tx, ROW2_T + 31), human(used), font=f_drive, fill=WHITE)
+    d.text((tx, ROW2_T + 31), human(used), font=f_cap, fill=WHITE)
     d.line([(tx, ROW2_T + 48), (x + cw_ - 10, ROW2_T + 48)], fill=DIVIDER)
     d.text((tx, ROW2_T + 52), "TOTAL", font=f_tiny, fill=GREY)
-    d.text((tx, ROW2_T + 60), human(tot), font=f_drive, fill=WHITE)
+    d.text((tx, ROW2_T + 60), human(tot), font=f_cap, fill=WHITE)
 
     # cpu
     x = xs[1]
@@ -363,7 +365,7 @@ def frame(dr):
     d.text((x + 12 + tw(cv, f_val), ROW2_T + 38), "°C", font=f_unit, fill=cpu_col(ct))
     dv = x + int(cw_ * 0.64)
     d.line([(dv, ROW2_T + 24), (dv, ROW2_T + 54)], fill=DIVIDER)
-    d.text((dv + 9, ROW2_T + 26), "UTILIZATION", font=f_tiny, fill=GREY)
+    d.text((dv + 9, ROW2_T + 26), "USAGE", font=f_tiny, fill=GREY)
     d.text((dv + 9, ROW2_T + 35), f"{busy:.0f}%", font=f_val_sm, fill=WHITE)
     bar(x + 10, ROW2_T + 62, cw_ - 20, 6, busy / 100, GREEN)
 
@@ -378,7 +380,7 @@ def frame(dr):
     d.text((x + 12 + tw(mv, f_val), ROW2_T + 38), f"/{mt:.0f}G", font=f_unit, fill=GREY)
     dv = x + int(cw_ * 0.64)
     d.line([(dv, ROW2_T + 24), (dv, ROW2_T + 54)], fill=DIVIDER)
-    d.text((dv + 9, ROW2_T + 26), "UTILIZATION", font=f_tiny, fill=GREY)
+    d.text((dv + 9, ROW2_T + 26), "USAGE", font=f_tiny, fill=GREY)
     d.text((dv + 9, ROW2_T + 35), f"{100 * mu / mt:.0f}%", font=f_val_sm, fill=WHITE)
     bar(x + 10, ROW2_T + 62, cw_ - 20, 6, mu / mt, GREEN)
 
