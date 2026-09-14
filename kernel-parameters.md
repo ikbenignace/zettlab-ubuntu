@@ -35,6 +35,23 @@ sudo reboot
 | `video=eDP-1:d`                        | Disable front LCD during boot (prevents hang)| Yes           | [Installation](ubuntu-installation.md) |
 | `snd_intel_dspcfg.dsp_driver=1`        | Force legacy HDA audio driver (fix Dummy Output) | Yes        | [Audio](audio-HDA-driver.md)   |
 
+## `video=eDP-1:d` Is a Trade-off, Not a Fix
+
+This parameter **disables the front panel at kernel level**. Nothing can then draw on
+it — not a framebuffer program, not Weston, nothing.
+
+| Goal | Setting |
+|---|---|
+| HDMI console readable, front panel unused | keep `video=eDP-1:d` |
+| Use the front panel (stats, status, artwork) | **remove** `video=eDP-1:d` |
+
+Keep it for the installation itself — the installer runs on the console, which is
+exactly what the conflict breaks. Remove it afterwards if you want the panel.
+
+On a headless NAS removing it costs nothing: the squashed HDMI console only matters
+when a monitor is attached. See [front-lcd-control.md](front-lcd-control.md) for why
+the conflict exists and what to do with the panel once it is alive.
+
 ## Current Status Notes
 
 - The onboard Realtek RTL8127 NIC has been abandoned due to instability. A USB-C Ethernet adapter is used instead.

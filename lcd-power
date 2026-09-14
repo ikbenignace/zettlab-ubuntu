@@ -1,0 +1,18 @@
+#!/bin/bash
+# Front LCD backlight on/off/toggle/level
+B=/sys/class/backlight/intel_backlight
+MAX=$(cat $B/max_brightness)
+CUR=$(cat $B/brightness)
+case "${1:-toggle}" in
+  on)     echo $((MAX/2)) > $B/brightness ;;
+  off)    echo 0 > $B/brightness ;;
+  full)   echo $MAX > $B/brightness ;;
+  toggle) if [ "$CUR" -gt 0 ]; then echo 0 > $B/brightness; else echo $((MAX/2)) > $B/brightness; fi ;;
+  status) echo "$CUR / $MAX ($((100*CUR/MAX))%)"; exit 0 ;;
+  *)      if [ "$1" -ge 0 ] 2>/dev/null && [ "$1" -le 100 ]; then
+            echo $((MAX*$1/100)) > $B/brightness
+          else
+            echo "usage: lcd-power [on|off|full|toggle|status|0-100]" >&2; exit 1
+          fi ;;
+esac
+echo "$(cat $B/brightness) / $MAX ($((100*$(cat $B/brightness)/MAX))%)"

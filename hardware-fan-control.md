@@ -22,6 +22,31 @@ Both CPU and HDD controllers follow consistent design principles:
 - Identical anti-chatter timer logic and asymmetric rise/fall response
 - On any temperature sensor read failure, the system forces full fan speed (183 PWM) for safety
 
+## Verified sysfs Interface
+
+Confirmed on Ubuntu 26.04, kernel 7.0.0-30-generic:
+
+```
+/sys/class/hwmon/hwmonN/     name = zettlab_d8_fans
+  pwm1  pwm2  pwm3           0-183   (not 0-255)
+  pwm1_enable ...            present, but read-only on this build
+  fan1_input  fan2_input  fan3_input    tachometer, RPM
+  fan1_label  fan2_label  fan3_label    "Disks 1" / "Disks 2" / "CPU"
+```
+
+`fanN_label` confirms the mapping on a live system, so you do not have to trust the
+table below — read it off the hardware.
+
+Writing `pwmN_enable` returns `Permission denied`. That is harmless: writing `pwmN`
+directly works without it.
+
+Typical readings at idle with the curve services running: disk fans ~920 rpm at PWM 67,
+CPU fan ~3550 rpm at PWM 120.
+
+> **DKMS signs the module automatically.** On Ubuntu the build is signed with
+> `/var/lib/shim-signed/mok/MOK.priv` as part of `dkms build`. With Secure Boot off it
+> loads regardless; with Secure Boot on you still need to enrol that MOK.
+
 ## Fan Mapping
 
 | Fan   | Target Component     |

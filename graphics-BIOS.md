@@ -29,9 +29,21 @@ Change only the following options:
 | **Skip Scanning of External Gfx Card**       | Enabled   | Skip unnecessary PCIe scan |
 | **Primary Display**                          | IGFX      | Force internal Arc iGPU as primary |
 | **Internal Graphics**                        | Enabled   | Ensure iGPU stays active |
-| **Igfx Gsm2**                                | **4GB**   | **Most important** — dedicated VRAM for AI workloads |
+| **Igfx Gsm2**                                | **4GB**   | Dedicated graphics memory. **Verify your firmware accepts it** — see the warning below |
 | **GT RC1p Support**                          | Disabled  | Reduces throttling during long inference |
 | **Media RC1p Support**                       | Disabled  | Same reason as above |
+
+> **`Igfx Gsm2 = 4GB` halts some firmware.** On BIOS `WY120V016`, where the stock value
+> is `0`, setting 4 GB produced `ASSERT_EFI_ERROR` at power-on and the machine would not
+> boot. Recovery: hold the power button, re-enter setup, set it back to `0`.
+>
+> If that happens to you, step up gradually — `512M`, `1GB`, `2GB` — to find your
+> ceiling, and do it *after* the OS is installed so a bad value never blocks your
+> install.
+>
+> Leaving it at `0` costs very little. Meteor Lake is UMA: the iGPU and CPU share system
+> memory and the driver allocates dynamically. `Igfx Gsm2` only reserves a *guaranteed*
+> block up front. See the memory-planning section of [llm-inference.md](llm-inference.md).
 
 ### Step 3: Leave Unchanged
 

@@ -69,6 +69,69 @@ After installation, create a dedicated `/data` subvolume and set up automatic sn
 
 → Follow the **[Btrfs Data Replication Guide](btrfs-data-replication.md)** for full instructions.
 
+## Installer Gotchas Hit in Practice
+
+Recorded from a real install on 2026-09-14 (BIOS `WY120V016`, Ubuntu 26.04.1).
+
+### The storage probe fails if the stock array is still assembled
+
+subiquity reports *"Sorry, there was a problem examining the storage devices on this
+system"* when the vendor's `mdraid → bcache → btrfs` stack is live. Choose **Switch to
+a shell** and deactivate it — this is non-destructive, the superblocks stay put:
+
+```bash
+mdadm --stop --scan
+lsblk                      # sdX should show only its own partitions now
+```
+
+Then `exit` back (twice if you ran `sudo -i`) and press **Continue**. If the error
+screen only offers Continue, that is enough — the re-probe happens on the way through.
+
+### Device letters move between environments
+
+The same disks enumerate differently under the vendor OS, the installer, and the
+installed system. On one machine, across three boots:
+
+| Disk | Vendor OS | Installer | Installed Ubuntu |
+|---|---|---|---|
+| 1 TB HDD | `sdb` | `sda` | `sda` |
+| 12 TB HDD | `sda` | `sdc` | `sdb` |
+| 12 TB HDD | `sdc` | `sdd` | `sdc` |
+| Ubuntu NVMe | — | `nvme0n1` | `nvme1n1` |
+| Vendor NVMe | `nvme1n1` | `nvme1n1` | `nvme0n1` |
+
+**Identify the install target by size and model, never by letter.** Confirm on the
+`Storage configuration` summary that only the intended disk appears under `USED
+DEVICES` before typing `Continue`.
+
+### Tick "Install OpenSSH server"
+
+Easy to skip, and painful afterwards — the front panel mirrors the console at 640×172,
+which is readable but miserable to type into. If you did miss it, you can still recover
+over IPv6: `sudo apt install -y openssh-server`.
+
+### The installer may not configure IPv4
+
+If the network step is passed while the link is still negotiating, subiquity can write a
+config with only `accept-ra: true` and no `dhcp4`. The result is an IPv6-only host that
+never appears in an IPv4 scan. Check `/etc/netplan/00-installer-config.yaml` and add
+either `dhcp4: true` or a static block.
+
+### BIOS: `Igfx Gsm2 = 4GB` can halt the firmware
+
+On BIOS `WY120V016` — where the stock value is `0` — raising `Igfx Gsm2` to 4 GB
+produced `ASSERT_EFI_ERROR` at power-on and the machine would not boot. Returning it to
+`0` cleared it. See [graphics-BIOS.md](graphics-BIOS.md); this costs nothing for LLM
+work, because Meteor Lake is UMA and the driver allocates from system RAM regardless.
+
+### Disabling Secure Boot may trigger a vendor lock screen
+
+Turning Secure Boot off produced a red *"Enable Secure Boot is required"* screen. It
+comes from the **vendor bootloader on the untouched system NVMe**, not from the
+firmware: Ubuntu itself installs and boots fine with Secure Boot disabled, and
+`mokutil --sb-state` on the installed system reports `SecureBoot disabled`. If you meet
+that screen, it is the vendor OS complaining, not a block on your install.
+
 ## Known Hardware Support in Ubuntu 26.04
 
 | Component   | Status                                      |

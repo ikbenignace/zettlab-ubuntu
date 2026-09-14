@@ -50,7 +50,7 @@ This table reflects the **Zettlab D6 Ultra** and **D8 Ultra** models (tested on 
 | [Storage Pool (ZFS)](storage-zfs.md) | ZFS mirror alternative — continuous parity, checksums, snapshots |
 | [Btrfs Data Replication](btrfs-data-replication.md) | Dedicated `/data` subvolume + btrbk snapshot replication to parity disk |
 | [RGB/LED Control](rgb-led-control.md) | USB RGB controller protocol (`/dev/ttyACM0`, VID:0x5759 PID:0x4358) |
-| [Front LCD Control](front-lcd-control.md) | Driving the 3.49" `eDP-1` panel: backlight, framebuffer, Weston |
+| [Front LCD Control](front-lcd-control.md) | Driving the 3.49" `eDP-1` panel: backlight, live stats, framebuffer |
 | [Samba Shares](samba-shares.md) | Home + /data + mergerfs pool Samba shares |
 
 ---
@@ -71,6 +71,18 @@ This table reflects the **Zettlab D6 Ultra** and **D8 Ultra** models (tested on 
 All kernel parameters are now documented in one place:
 
 → **[Kernel Parameters Reference](kernel-parameters.md)**
+
+### Helper Scripts
+
+| Script | Purpose |
+|---|---|
+| [`zettlab-tui.py`](zettlab-tui.py) | Curses control panel — fans, backlight, LEDs |
+| [`lcd-stats`](lcd-stats) | Live system stats on the front panel (systemd service) |
+| [`lcd-power`](lcd-power) | Front panel backlight: `on` / `off` / `toggle` / `full` / `0-100` |
+| [`lcd-grab`](lcd-grab) | Screenshot the front panel to a PNG |
+| [`rgb_control.py`](rgb_control.py) | RGB LED control (reference protocol implementation) |
+| [`rgb-raw.py`](rgb-raw.py) | RGB frame sender with an explicit speed byte — for protocol testing |
+| [`cpu-fan-curve.sh`](cpu-fan-curve.sh) · [`hdd-fan-curve.sh`](hdd-fan-curve.sh) | Temperature-driven fan curves |
 
 ### Terminal Control Panel
 

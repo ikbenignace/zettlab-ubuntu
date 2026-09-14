@@ -2,7 +2,7 @@
 
 > How ZettOS drives the 3.49" front panel, and how to reproduce it on Ubuntu. Includes backlight control, rendering options, and an explanation of the HDMI resolution conflict documented elsewhere in this repo.
 
-> Findings below were read directly from a running ZettOS install on a D6 Ultra (2026-09-14). The ZettOS observations are verified; the Ubuntu procedures are derived from them and not yet hardware-tested.
+> **Verified working on Ubuntu 26.04 / kernel 7.0.0-30-generic on a D6 Ultra (2026-09-14).** The stock-firmware observations were read from a running ZettOS install on the same machine; the Ubuntu procedures below were then run end to end and are in daily use.
 
 ## Panel Facts
 
@@ -116,38 +116,61 @@ sudo udevadm control --reload-rules && sudo udevadm trigger
 
 ## Rendering Options
 
-### Option 1: Direct framebuffer (simplest)
+### Option 1: Direct framebuffer (what this repo uses)
 
-No compositor needed. Write pixels straight to `/dev/fb0`.
+No compositor needed. Write pixels straight to `/dev/fb0`. Three working scripts ship
+with this repo:
 
-```python
-#!/usr/bin/env python3
-"""Fill the front LCD with a solid colour."""
-import mmap
+| Script | Purpose |
+|---|---|
+| [`lcd-stats`](lcd-stats) | Renders live system stats to the panel; runs as a systemd service |
+| [`lcd-power`](lcd-power) | Backlight on / off / toggle / percentage |
+| [`lcd-grab`](lcd-grab) | Reads the framebuffer back into a PNG — useful for iterating on layout without standing in front of the machine |
 
-WIDTH, HEIGHT = 172, 640
-BPP, STRIDE = 4, 704          # 176 px padded * 4 bytes
-
-def fill(r, g, b):
-    pixel = bytes((b, g, r, 0))          # i915 fbdev is XRGB8888 little-endian
-    row = pixel * WIDTH
-    with open("/dev/fb0", "r+b") as f:
-        fb = mmap.mmap(f.fileno(), STRIDE * HEIGHT)
-        for y in range(HEIGHT):
-            off = y * STRIDE
-            fb[off:off + WIDTH * BPP] = row
-        fb.flush()
-        fb.close()
-
-if __name__ == "__main__":
-    fill(0, 40, 90)
+```bash
+sudo install -m 755 lcd-stats lcd-power lcd-grab /usr/local/sbin/
+sudo apt install -y python3-pil fonts-dejavu-core
+sudo lcd-power on
+sudo lcd-stats --once
 ```
 
-Run it as root (or add yourself to the `video` group), and raise the backlight first or you will see nothing.
+#### Two things that cost time the first go
 
-> `/dev/fb0` is shared with `fbcon`. If a console is active on the same device it will overwrite your output on the next redraw. Move the console away with `console=tty2`, or use Option 2.
+**`mmap` + `flush()` fails on this framebuffer** with `OSError: [Errno 22] Invalid
+argument`. `msync` on the i915 fbdev device rejects it. Plain `seek` + `write` works:
 
-For text and images, `pygame` on the `fbcon`/`directfb` driver or Pillow rendering into the same buffer both work. Remember to rotate 90°.
+```python
+row = 172 * 4                       # 688 visible bytes
+with open("/dev/fb0", "r+b", buffering=0) as fh:
+    for y in range(640):
+        fh.seek(y * 704)            # stride is 704, not 688
+        fh.write(raw[y * row:(y + 1) * row])
+```
+
+The 16-byte difference between stride (704) and visible row (688) is padding — skip it
+rather than writing into it.
+
+**Pillow has no `RGBX` image mode.** `img.convert("RGBX")` raises. The raw *encoder*
+mode is what you want, applied straight to an RGB image:
+
+```python
+raw = img.tobytes("raw", "BGRX")    # i915 XRGB8888 little-endian
+```
+
+#### Rotation
+
+Render a landscape 640×172 canvas, then rotate to the panel's 172×640:
+
+```python
+img = img.transpose(Image.ROTATE_270)   # ROTATE_90 comes out upside down
+```
+
+On this chassis `ROTATE_270` is upright. If yours is inverted, flip that one constant.
+
+> `/dev/fb0` is shared with `fbcon`. If a console is active on the same device it will
+> overwrite your output on the next redraw. Move the console away with `console=tty2`,
+> or use Option 2. On a headless box the idle console does not repaint, so in practice
+> this is not a problem.
 
 ### Option 2: Weston + a Wayland client (what ZettOS does)
 
@@ -196,6 +219,29 @@ This is the easiest route to "show whatever I want", since you design the panel 
 ### Option 4: LVGL
 
 If you want the ZettOS look specifically, `zettos-lcd-display` is an LVGL app using the `lv_wayland` driver. LVGL is open source; the fonts it uses are D-DIN Pro. This is the most work and the least reason to bother unless you are targeting a very constrained redraw budget.
+
+## Live Stats Panel
+
+`lcd-stats` draws a single-screen dashboard sized for the 640×172 landscape canvas:
+
+```
+CPU 46 C     DISKS 44 C    sda 41  sdb 43  sdc 44   |        nas
+FANS  D1 797   D2 787   CPU 3552                    |  192.168.0.50
+      pwm 58   pwm 58   pwm 120                     |    up 0h 52m
+RAM  1.0/28G  [####------]  0.12                    |    20:19:57
+```
+
+Values come from sysfs and `smartctl`; temperatures shift green → amber → red as they
+rise. Refresh interval is `INTERVAL` at the top of the script.
+
+Capture what the panel currently shows, without leaving your desk:
+
+```bash
+sudo lcd-grab /tmp/lcd.png
+```
+
+That reads the framebuffer back and writes a PNG, already rotated to landscape. It
+makes layout work a normal edit-and-look loop instead of walking to the machine.
 
 ## Suggested systemd Service
 
