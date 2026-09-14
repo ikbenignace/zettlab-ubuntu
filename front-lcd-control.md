@@ -126,6 +126,7 @@ with this repo:
 | [`lcd-stats`](lcd-stats) | Renders live system stats to the panel; runs as a systemd service |
 | [`lcd-power`](lcd-power) | Backlight on / off / toggle / percentage |
 | [`lcd-grab`](lcd-grab) | Reads the framebuffer back into a PNG — useful for iterating on layout without standing in front of the machine |
+| [`rgb-raw.py`](rgb-raw.py) | Sends LED frames with an explicit speed byte, including a `--sweep` mode for mapping the protocol |
 
 ```bash
 sudo install -m 755 lcd-stats lcd-power lcd-grab /usr/local/sbin/
@@ -233,6 +234,23 @@ RAM  1.0/28G  [####------]  0.12                    |    20:19:57
 
 Values come from sysfs and `smartctl`; temperatures shift green → amber → red as they
 rise. Refresh interval is `INTERVAL` at the top of the script.
+
+The drive row is **adaptive**: every SATA device found by `smartctl` plus every NVMe
+with a `hwmon` temperature is listed, six per row, wrapping to a second row — so a
+fully populated 8-bay chassis with two NVMe drives still fits. SATA drives use a
+47/55 °C warn/hot threshold, NVMe 60/70 °C, since they run hotter by design.
+
+`smartctl` is slow enough to stall a 5-second redraw, so it is polled once every
+`SMART_EVERY` ticks and cached in between. sysfs values still update every frame.
+
+> **Turn off the console cursor** or a white block blinks on top of your output:
+>
+> ```bash
+> echo 0 | sudo tee /sys/class/graphics/fbcon/cursor_blink
+> ```
+>
+> The shipped systemd unit does this in `ExecStartPre`. Without it the cursor sits
+> wherever the console last left it and repaints on its own schedule.
 
 Capture what the panel currently shows, without leaving your desk:
 

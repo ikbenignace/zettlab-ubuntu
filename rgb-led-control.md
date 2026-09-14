@@ -86,6 +86,31 @@ for each byte b in payload:
 | 5 | FLICKER_MODE | Flicker effect |
 | 6 | LIGHT_MODE | Static/solid color |
 
+## Animation Speed — Read This Before Concluding "It Does Not Animate"
+
+`rgb_control.py` **negates** the speed you pass:
+
+```python
+neg_speed = (-speed) & 0xff        # speed 3 -> byte 0xFD (253)
+```
+
+So a small, intuitive-looking number produces a very large byte. If the animated modes
+look permanently static to you, that is the first thing to check — the animation may be
+running far faster or far slower than you expect rather than not running at all.
+
+Use [`rgb-raw.py`](rgb-raw.py) to send the byte you actually want and map the behaviour
+on your own hardware:
+
+```bash
+# one value
+sudo rgb-raw.py 1 --start 0,255,0 --speed 20
+
+# sweep several, 8 seconds apart, and watch which one looks right
+sudo rgb-raw.py 1 --start 0,255,0 --sweep 1,20,60,128,200,253 --hold 8
+```
+
+Every step prints the exact frame it sent, so whatever you settle on is reproducible.
+
 ## Brightness Control
 
 **No dedicated brightness field exists.** The protocol only accepts: `mode`, `startR/G/B`, `endR/G/B`, and `speed`. RGB values are sent as raw 8-bit bytes (0x00 = off, 0xFF = max).

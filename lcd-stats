@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Render system stats to the Zettlab front LCD (eDP-1, 172x640 portrait)."""
-import glob, os, mmap, socket, subprocess, time
+import glob, os, socket, subprocess, sys, time
 from PIL import Image, ImageDraw, ImageFont
 
 FB = "/dev/fb0"
@@ -8,21 +8,28 @@ PW, PH, STRIDE, BPP = 172, 640, 704, 4      # panel is portrait
 CW, CH = PH, PW                              # canvas is landscape 640x172
 ROTATE = Image.ROTATE_270                    # flip to ROTATE_90 if upside down
 INTERVAL = 5
+SMART_EVERY = 12                             # smartctl is slow; poll it less often
 
 FONT = "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf"
 f_big = ImageFont.truetype(FONT, 34)
 f_med = ImageFont.truetype(FONT, 22)
 f_sml = ImageFont.truetype(FONT, 17)
 
-def fan_hwmon():
-    for d in glob.glob("/sys/class/hwmon/hwmon*"):
+GREY, DIM, RULE = (135, 135, 145), (105, 105, 115), (45, 45, 52)
+SPLIT = 404                                  # left block ends, right block starts
+
+
+def hwmon_named(name):
+    for d in sorted(glob.glob("/sys/class/hwmon/hwmon*")):
         try:
-            if open(os.path.join(d, "name")).read().strip() == "zettlab_d8_fans":
-                return d
+            if open(os.path.join(d, "name")).read().strip() == name:
+                yield d
         except OSError:
             pass
-    return None
-HW = fan_hwmon()
+
+
+HW = next(hwmon_named("zettlab_d8_fans"), None)
+
 
 def read_int(p):
     try:
@@ -30,128 +37,155 @@ def read_int(p):
     except Exception:
         return None
 
+
 def cpu_temp():
-    for d in glob.glob("/sys/class/hwmon/hwmon*"):
-        try:
-            if open(os.path.join(d, "name")).read().strip() == "coretemp":
-                v = read_int(os.path.join(d, "temp1_input"))
-                if v: return v / 1000.0
-        except OSError:
-            pass
+    for d in hwmon_named("coretemp"):
+        v = read_int(os.path.join(d, "temp1_input"))
+        if v:
+            return v / 1000.0
     return None
 
+
 def fans():
-    if not HW: return []
-    out = []
-    for n in (1, 2, 3):
-        rpm = read_int(f"{HW}/fan{n}_input")
-        pwm = read_int(f"{HW}/pwm{n}")
-        out.append((rpm, pwm))
-    return out
+    if not HW:
+        return []
+    return [(read_int(f"{HW}/fan{n}_input"), read_int(f"{HW}/pwm{n}")) for n in (1, 2, 3)]
+
 
 def disk_temps():
+    """Spinning disks and SATA SSDs, via SMART. Slow — cached by the caller."""
     res = []
-    for dev in sorted(glob.glob("/dev/sd[a-h]")):
+    for dev in sorted(glob.glob("/dev/sd[a-z]")):
         try:
-            o = subprocess.run(["smartctl", "-A", dev], capture_output=True,
-                               text=True, timeout=8).stdout
-            for line in o.splitlines():
+            out = subprocess.run(["smartctl", "-A", dev], capture_output=True,
+                                 text=True, timeout=8).stdout
+            for line in out.splitlines():
                 p = line.split()
                 if p and p[0] in ("194", "190") and len(p) >= 10:
-                    res.append((dev[-3:], int(p[9]))); break
+                    res.append((dev[-3:], int(p[9])))
+                    break
         except Exception:
             pass
     return res
+
+
+def nvme_temps():
+    res = []
+    for d in hwmon_named("nvme"):
+        v = read_int(os.path.join(d, "temp1_input"))
+        if v:
+            res.append((f"nv{len(res)}", v // 1000))
+    return res
+
 
 def mem():
     m = {}
     for line in open("/proc/meminfo"):
         k, v = line.split(":", 1)
         m[k] = int(v.split()[0])
-    total = m["MemTotal"]; avail = m.get("MemAvailable", m["MemFree"])
+    total = m["MemTotal"]
+    avail = m.get("MemAvailable", m["MemFree"])
     return (total - avail) / 1048576.0, total / 1048576.0
+
 
 def load():
     return os.getloadavg()[0]
 
+
 def ip():
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("192.168.0.1", 80)); a = s.getsockname()[0]; s.close()
+        s.connect(("192.168.0.1", 80))
+        a = s.getsockname()[0]
+        s.close()
         return a
     except Exception:
         return "-"
 
+
 def uptime():
     s = int(float(open("/proc/uptime").read().split()[0]))
-    d, s = divmod(s, 86400); h, s = divmod(s, 3600)
-    return f"{d}d {h}h" if d else f"{h}h {s//60}m"
+    d, s = divmod(s, 86400)
+    h, s = divmod(s, 3600)
+    return f"{d}d {h}h" if d else f"{h}h {s // 60}m"
+
 
 def heat(t, warm, hot):
-    if t is None: return (120, 120, 120)
-    if t >= hot:  return (255, 70, 60)
-    if t >= warm: return (255, 170, 40)
+    if t is None:
+        return (120, 120, 120)
+    if t >= hot:
+        return (255, 70, 60)
+    if t >= warm:
+        return (255, 170, 40)
     return (90, 220, 130)
 
-def frame():
+
+def frame(hdd):
     img = Image.new("RGB", (CW, CH), (0, 0, 0))
     d = ImageDraw.Draw(img)
-    GREY, DIM = (135, 135, 145), (105, 105, 115)
-    SPLIT = 404                       # left block ends, right block starts
 
     def rtext(x, y, txt, font, fill):
         d.text((x - d.textlength(txt, font=font), y), txt, font=font, fill=fill)
 
-    # ---- row 1: temperatures -------------------------------------------
+    nvme = nvme_temps()
+
+    # ---- band 1: headline temperatures ---------------------------------
     ct = cpu_temp()
     d.text((8, 0), "CPU", font=f_sml, fill=GREY)
     cv = f"{ct:.0f}" if ct else "--"
-    d.text((8, 14), cv, font=f_big, fill=heat(ct, 70, 85))
-    d.text((8 + d.textlength(cv, font=f_big) + 4, 26), "C", font=f_med,
+    d.text((8, 12), cv, font=f_big, fill=heat(ct, 70, 85))
+    d.text((8 + d.textlength(cv, font=f_big) + 4, 24), "C", font=f_med,
            fill=heat(ct, 70, 85))
 
-    dt = disk_temps()
-    mx = max((t for _, t in dt), default=None)
+    mx = max((t for _, t in hdd), default=None)
     d.text((150, 0), "DISKS", font=f_sml, fill=GREY)
     dv = f"{mx}" if mx else "--"
-    d.text((150, 14), dv, font=f_big, fill=heat(mx, 47, 55))
-    d.text((150 + d.textlength(dv, font=f_big) + 4, 26), "C", font=f_med,
+    d.text((150, 12), dv, font=f_big, fill=heat(mx, 47, 55))
+    d.text((150 + d.textlength(dv, font=f_big) + 4, 24), "C", font=f_med,
            fill=heat(mx, 47, 55))
 
-    if dt:
-        x = 260
-        for n, t in dt[:4]:
-            d.text((x, 20), n, font=f_sml, fill=DIM)
-            d.text((x, 36), f"{t}", font=f_med, fill=heat(t, 47, 55))
-            x += 48
+    d.text((268, 6), f"{len(hdd)} sata", font=f_sml, fill=DIM)
+    d.text((268, 24), f"{len(nvme)} nvme", font=f_sml, fill=DIM)
 
-    # ---- row 2: fans ---------------------------------------------------
-    d.line([(8, 66), (SPLIT - 16, 66)], fill=(45, 45, 52))
-    d.text((8, 72), "FANS", font=f_sml, fill=GREY)
-    for lab, (rpm, pwm), x in zip(("D1", "D2", "CPU"), fans() or
-                                  [(None, None)] * 3, (74, 186, 298)):
+    # ---- band 2: every drive, wrapping ---------------------------------
+    d.line([(8, 50), (SPLIT - 16, 50)], fill=RULE)
+    cells = [(n, t, 47, 55) for n, t in hdd] + [(n, t, 60, 70) for n, t in nvme]
+    CELL_W, PER_ROW, Y0 = 66, 6, 55
+    for i, (name, temp, warm, hot) in enumerate(cells[:12]):
+        cx = 8 + (i % PER_ROW) * CELL_W
+        cy = Y0 + (i // PER_ROW) * 19
+        d.text((cx, cy), name, font=f_sml, fill=DIM)
+        d.text((cx + d.textlength(name + " ", font=f_sml), cy), str(temp),
+               font=f_sml, fill=heat(temp, warm, hot))
+
+    # ---- band 3: fans --------------------------------------------------
+    d.line([(8, 96), (SPLIT - 16, 96)], fill=RULE)
+    d.text((8, 102), "FANS", font=f_sml, fill=GREY)
+    for lab, (rpm, pwm), x in zip(("D1", "D2", "CPU"),
+                                  fans() or [(None, None)] * 3, (74, 186, 298)):
         col = (90, 220, 130) if rpm else (255, 70, 60)
-        d.text((x, 72), lab, font=f_sml, fill=DIM)
-        d.text((x, 88), f"{rpm if rpm is not None else 0}", font=f_med, fill=col)
-        d.text((x, 112), f"pwm {pwm if pwm is not None else 0}", font=f_sml, fill=DIM)
+        d.text((x, 102), lab, font=f_sml, fill=DIM)
+        d.text((x + 32, 100), f"{rpm if rpm is not None else 0}", font=f_med, fill=col)
+        d.text((x, 120), f"pwm {pwm if pwm is not None else 0}", font=f_sml, fill=DIM)
 
-    # ---- row 3: memory -------------------------------------------------
+    # ---- band 4: memory ------------------------------------------------
     used, total = mem()
-    d.line([(8, 136), (SPLIT - 16, 136)], fill=(45, 45, 52))
-    d.text((8, 142), "RAM", font=f_sml, fill=GREY)
-    d.text((58, 140), f"{used:.1f}/{total:.0f}G", font=f_med, fill=(205, 205, 225))
-    bw = 150
-    d.rectangle([196, 146, 196 + bw, 158], outline=(62, 62, 70))
-    d.rectangle([196, 146, 196 + int(bw * used / total), 158], fill=(90, 150, 220))
-    d.text((356, 142), f"{load():.2f}", font=f_sml, fill=DIM)
+    d.line([(8, 140), (SPLIT - 16, 140)], fill=RULE)
+    d.text((8, 146), "RAM", font=f_sml, fill=GREY)
+    d.text((54, 144), f"{used:.1f}/{total:.0f}G", font=f_med, fill=(205, 205, 225))
+    bw = 128
+    d.rectangle([196, 150, 196 + bw, 161], outline=(62, 62, 70))
+    d.rectangle([196, 150, 196 + int(bw * used / total), 161], fill=(90, 150, 220))
+    d.text((340, 146), f"{load():.2f}", font=f_sml, fill=DIM)
 
     # ---- right column --------------------------------------------------
-    d.line([(SPLIT, 6), (SPLIT, CH - 6)], fill=(45, 45, 52))
-    rtext(CW - 14, 2, socket.gethostname(), f_big, (110, 175, 255))
-    rtext(CW - 14, 46, ip(), f_med, (185, 185, 195))
-    rtext(CW - 14, 76, f"up {uptime()}", f_sml, DIM)
-    rtext(CW - 14, 108, time.strftime("%H:%M:%S"), f_big, (205, 205, 225))
+    d.line([(SPLIT, 6), (SPLIT, CH - 6)], fill=RULE)
+    rtext(CW - 14, 0, socket.gethostname(), f_big, (110, 175, 255))
+    rtext(CW - 14, 44, ip(), f_med, (185, 185, 195))
+    rtext(CW - 14, 74, f"up {uptime()}", f_sml, DIM)
+    rtext(CW - 14, 104, time.strftime("%H:%M:%S"), f_big, (205, 205, 225))
     return img
+
 
 def blit(img):
     img = img.transpose(ROTATE)                       # -> 172x640
@@ -162,13 +196,18 @@ def blit(img):
             fh.seek(y * STRIDE)
             fh.write(raw[y * row:(y + 1) * row])
 
+
 if __name__ == "__main__":
-    import sys
     once = "--once" in sys.argv
+    hdd, tick = disk_temps(), 0
     while True:
         try:
-            blit(frame())
+            if tick % SMART_EVERY == 0 and tick:
+                hdd = disk_temps()
+            blit(frame(hdd))
         except Exception as e:
             print("err:", e, flush=True)
-        if once: break
+        if once:
+            break
+        tick += 1
         time.sleep(INTERVAL)
