@@ -1,0 +1,5 @@
+
+# Persoonlijk build-log, blijft lokaal
+SETUP-LOG.md
+__pycache__/
+*.pyc

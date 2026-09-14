@@ -36,6 +36,7 @@ This table reflects the **Zettlab D6 Ultra** and **D8 Ultra** models (tested on 
 
 | Guide | Description |
 |-------|-------------|
+| [Migrating from ZettOS](migrating-from-zettos.md) | ZettOS disk layout, reading your old data, choosing a stack |
 | [Ubuntu Installation](ubuntu-installation.md) | Installing Ubuntu 26.04 Server |
 | [Kernel Parameters](kernel-parameters.md) | Centralized list of all recommended kernel parameters |
 | [Network Driver](networking-r8127.md) | Realtek r8127 status (now using USB Ethernet adapter) |
@@ -46,8 +47,10 @@ This table reflects the **Zettlab D6 Ultra** and **D8 Ultra** models (tested on 
 | [LLM Inference](llm-inference.md) | llama.cpp on Arc iGPU (SYCL preferred, Vulkan fallback) |
 | [Audio Configuration](audio-HDA-driver.md) | Fixing "Dummy Output" issue |
 | [Storage Pool](storage-mergerfs-snapraid.md) | mergerfs + SnapRAID configuration |
+| [Storage Pool (ZFS)](storage-zfs.md) | ZFS mirror alternative — continuous parity, checksums, snapshots |
 | [Btrfs Data Replication](btrfs-data-replication.md) | Dedicated `/data` subvolume + btrbk snapshot replication to parity disk |
 | [RGB/LED Control](rgb-led-control.md) | USB RGB controller protocol (`/dev/ttyACM0`, VID:0x5759 PID:0x4358) |
+| [Front LCD Control](front-lcd-control.md) | Driving the 3.49" `eDP-1` panel: backlight, framebuffer, Weston |
 | [Samba Shares](samba-shares.md) | Home + /data + mergerfs pool Samba shares |
 
 ---
@@ -68,6 +71,33 @@ This table reflects the **Zettlab D6 Ultra** and **D8 Ultra** models (tested on 
 All kernel parameters are now documented in one place:
 
 → **[Kernel Parameters Reference](kernel-parameters.md)**
+
+### Terminal Control Panel
+
+`zettlab-tui.py` is a curses interface for the three chassis fans, the front LCD
+backlight, and the RGB LEDs:
+
+```bash
+sudo ./zettlab-tui.py
+```
+
+Stdlib only, no dependencies. It auto-detects either fan driver — `zettlab_d8_fans`
+(the DKMS module) or `zettos_pwm_fan` (stock ZettOS) — and adapts to their different
+sysfs attribute names. Any section whose hardware is absent is simply skipped.
+
+| Key | Action |
+|-----|--------|
+| `j`/`k` or arrows | move between controls |
+| `h`/`l`, `-`/`+` | adjust by 1 |
+| `J`/`L` | adjust by 10 |
+| `1`/`2`/`3` | jump to a fan |
+| `b` / `m` / `c` | jump to backlight / LED mode / LED colour |
+| `0` | display and LEDs off (fans untouched) |
+| `q` | quit |
+
+> Manual PWM writes are overridden by `cpu-fan-curve.service` and
+> `hdd-fan-curve.service` within seconds. The TUI warns when they are active; stop
+> them first if you want manual control to stick.
 
 ### DKMS Modules
 
