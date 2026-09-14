@@ -21,7 +21,7 @@ This table reflects the **Zettlab D6 Ultra** and **D8 Ultra** models (tested on 
 
 | Component     | D6 Ultra                          | D8 Ultra                          | Notes |
 |---------------|-----------------------------------|-----------------------------------|-------|
-| **CPU**       | Intel Core Ultra 5 125H           | Intel Core Ultra 5 125H           | PL2 93 W. **PL1 is not a hardware lock** — the stock firmware sets 45 W, Ubuntu leaves it open. See [thermals](hardware-fan-control.md#power-limits-differ-from-the-stock-firmware) |
+| **CPU**       | Intel Core Ultra 5 125H           | Intel Core Ultra 5 125H           | Sustained draw measured at **45 W**, PL2 93 W. sysfs reports PL1 as 200 W under Ubuntu but the platform holds 45 W regardless — see [thermals](hardware-fan-control.md#power-limits-read-the-meter-not-the-register) |
 | **Bays**      | 6× 3.5" HDD bays                  | 8× 3.5" HDD bays                  | Hot-swappable |
 | **Front LCD** | 3.49-inch, 640×172 (`eDP-1`)      | 3.49-inch, 640×172 (`eDP-1`)      | Disabled during boot with `video=eDP-1:d` |
 | **Audio**     | Intel Meteor Lake iGPU DSP        | Intel Meteor Lake iGPU DSP        | Fixed with `snd_intel_dspcfg.dsp_driver=1` |

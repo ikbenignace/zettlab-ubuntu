@@ -404,56 +404,63 @@ sudo modprobe zettlab_gpio_keys
 sudo systemctl restart cpu-fan-curve hdd-fan-curve zettlab-buttons
 ```
 
-## Power Limits Differ from the Stock Firmware
+## Power Limits: Read the Meter, Not the Register
 
-Measured on the same machine, before and after replacing the vendor OS:
+The RAPL registers and the actual behaviour disagree on this platform, and the
+registers are the misleading half.
 
 | | Stock firmware | Ubuntu 26.04 |
 |---|---|---|
-| PL1 `long_term` | 45 W | **200 W** (32 s window) |
+| PL1 `long_term` in sysfs | 45 W | **200 W** (32 s window) |
 | PL2 `short_term` | 93 W | 93 W (2 ms window) |
 | PL4 `peak_power` | — | 160 W |
 | Chip base power | 28 W | 28 W |
+| **Measured sustained draw** | — | **45 W** |
 
-200 W on a 28 W part means no meaningful cap. **PL1 is a firmware/OS setting, not a
-hardware lock**, and Ubuntu does not reproduce the vendor's 45 W. Sustained workloads
-therefore run hotter and faster than they did on the stock OS.
+200 W on a 28 W part reads like "no cap", but it is not what the hardware does. Four
+consecutive 20-second windows under an 18-thread load measured 44.9, 45.0, 45.1 and
+45.0 W. Something below RAPL — platform budget or a firmware limit the sysfs interface
+does not expose — holds the package at 45 W regardless.
 
-Read yours with:
+**Capping PL1 to 45 W therefore changes nothing on this chassis.** Measure before you
+tune it:
 
 ```bash
 R=/sys/class/powercap/intel-rapl:0
-for i in 0 1 2; do
-  echo "$(cat $R/constraint_${i}_name): $(( $(cat $R/constraint_${i}_power_limit_uw) / 1000000 )) W"
-done
+a=$(sudo cat $R/energy_uj); sleep 20; b=$(sudo cat $R/energy_uj)
+awk -v a=$a -v b=$b 'BEGIN{printf "%.1f W\n", (b-a)/20000000}'
 ```
 
-### Is the stock cooling enough without the cap?
+Run that under load, not at idle. Idle on this board is about 5 W.
 
-On a 13-minute Geekbench 6 run: peak 85 °C, average 50 °C, and the decisive number —
+### Sustained thermals
 
-```bash
-cat /sys/devices/system/cpu/cpu0/thermal_throttle/package_throttle_count   # 0
+At 45 W sustained across all threads:
+
+```
+CPU 77-79 C     fan3 pwm 121, ~3600 rpm
+package_throttle_count: 0
 ```
 
-Zero throttle events against a Tjmax of 110 °C. The chassis cooling handles an
-uncapped PL1 on this part.
+Zero throttle events against a Tjmax of 110 C.
 
-### Restoring the vendor cap
+### The curve behaves differently under burst and sustained load
 
-Worth doing if you want a quieter machine and care less about sustained throughput:
+Worth understanding before you conclude the fan is lazy:
 
-```bash
-echo 45000000 | sudo tee /sys/class/powercap/intel-rapl:0/constraint_0_power_limit_uw
-```
+| Load | Peak CPU | Fan response |
+|---|---|---|
+| Geekbench 6 (bursty) | 85 C | pwm 85, ~2680 rpm |
+| All-thread sustained | 79 C | pwm 121, ~3600 rpm |
 
-That does not survive a reboot. For a permanent cap, wrap it in a systemd unit ordered
-after `multi-user.target`.
+The bursty run hit a *higher* peak with a *lower* fan speed. That is the EMA smoothing
+working as designed: Geekbench swings between 44 and 85 C within tens of seconds, so the
+smoothed temperature the curve acts on stays far below the spikes. Sustained load holds
+the temperature steady, the smoothed value converges on it, and the fan ramps properly.
 
-> Leave it open if you run LLM inference. The whole point of a long inference run is
-> sustained throughput, which is exactly what PL1 governs.
+For LLM inference — the sustained case — the second row is what you get.
 
-## Safety Notes
+## Safety Notes## Safety Notes
 
 - The curves are intentionally conservative and anti-chatter focused
 - PWM values below ~60–80 can cause fan stalling
