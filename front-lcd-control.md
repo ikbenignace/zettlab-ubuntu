@@ -237,19 +237,42 @@ STORAGE  nv1 38                        |   20:33:00
 
 ![Front panel](docs-lcd-panel.png)
 
-A capacity arc on the left, live CPU and memory meters in the middle, every drive
-temperature below them, and identity on the right. Storage is summed across all mounted
-real filesystems (`ext4`, `xfs`, `btrfs`, `zfs`, …), deduplicated by filesystem id, so
-a pool shows up automatically once you create one.
+Three bands:
 
-Values come from sysfs, `/proc`, and `smartctl`; temperatures shift green → amber → red
-as they rise, and the capacity arc turns amber past 75 % and red past 90 %. Refresh
-interval is `INTERVAL` at the top of the script.
+| Band | Contents |
+|---|---|
+| Header | Hostname, a health badge summarising every drive, the clock, and the IP |
+| Body | Storage arc, CPU temperature and load, memory, fan tachometers, uptime |
+| Footer | One cell per drive: SMART health dot, name, temperature |
 
-The drive row is **adaptive**: every SATA device found by `smartctl` plus every NVMe
-with a `hwmon` temperature is listed, six per row, wrapping to a second row — so a
-fully populated 8-bay chassis with two NVMe drives still fits. SATA drives use a
-47/55 °C warn/hot threshold, NVMe 60/70 °C, since they run hotter by design.
+Storage is summed across all mounted real filesystems (`ext4`, `xfs`, `btrfs`, `zfs`, …)
+and deduplicated by filesystem id, so a pool appears on the gauge as soon as it exists,
+with no configuration. The arc turns amber past 75 % and red past 90 %.
+
+### Drive discovery scales to a full chassis
+
+Drives are enumerated at runtime from `/dev/sd[a-z]` and `/dev/nvme*n*` — never a fixed
+list — and the footer cell width is computed from how many were found. A fully populated
+8-bay chassis plus two NVMe drives fits without changes:
+
+![Ten drives](docs-lcd-panel-10drives.png)
+
+### Health, not just temperature
+
+Each drive gets a dot coloured from its SMART state rather than its temperature alone:
+
+| Colour | Meaning |
+|---|---|
+| Green | Overall-health `PASSED`, no degradation attributes set |
+| Amber | Non-zero `Reallocated_Sector_Ct` (5), `Current_Pending_Sector` (197) or `Offline_Uncorrectable` (198); for NVMe a non-zero `Critical Warning` or media-integrity error count |
+| Red | Overall-health `FAILED` |
+| Grey | No SMART data — device asleep or unsupported |
+
+The temperature underneath is coloured separately, with NVMe on a higher threshold
+(60/72 °C) than spinning disks (47/55 °C) because they run hotter by design.
+
+`smartctl` is polled with `-n standby`, so sleeping disks are **not** spun up just to
+draw a panel. A drive that is asleep keeps its last known reading instead of blanking.
 
 `smartctl` is slow enough to stall a 5-second redraw, so it is polled once every
 `SMART_EVERY` ticks and cached in between. sysfs values still update every frame.
