@@ -277,14 +277,23 @@ draw a panel. A drive that is asleep keeps its last known reading instead of bla
 `smartctl` is slow enough to stall a 5-second redraw, so it is polled once every
 `SMART_EVERY` ticks and cached in between. sysfs values still update every frame.
 
-> **Turn off the console cursor** or a white block blinks on top of your output:
+> **Turn off the console cursor** or a white block blinks on top of your output.
+> The sysfs write does not survive a reboot, so set it in two places:
 >
 > ```bash
-> echo 0 | sudo tee /sys/class/graphics/fbcon/cursor_blink
+> # kernel command line, applies from boot
+> GRUB_CMDLINE_LINUX_DEFAULT="quiet splash vt.global_cursor_default=0 ..."
+>
+> # and as a pre-start step, since fbcon is guaranteed to exist by then
+> sudo mkdir -p /etc/systemd/system/lcd-stats.service.d
+> sudo tee /etc/systemd/system/lcd-stats.service.d/cursor.conf <<'EOF'
+> [Service]
+> ExecStartPre=/bin/sh -c "echo 0 > /sys/class/graphics/fbcon/cursor_blink"
+> EOF
 > ```
 >
-> The shipped systemd unit does this in `ExecStartPre`. Without it the cursor sits
-> wherever the console last left it and repaints on its own schedule.
+> Verify after a reboot with `cat /sys/class/graphics/fbcon/cursor_blink` — it should
+> read `0`.
 
 Capture what the panel currently shows, without leaving your desk:
 

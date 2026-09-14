@@ -97,6 +97,59 @@ done
 sensors
 ```
 
+## The First Kernel Upgrade Will Catch You Out
+
+Observed on a real install, and worth understanding before it bites.
+
+`linux-headers-generic` is a **meta-package that pulls the newest kernel**, which is
+often newer than the one you are running. So this sequence quietly leaves you exposed:
+
+```
+19:58:46  apt install build-essential dkms linux-headers-generic ...
+          -> also installs linux-image-7.0.0-31-generic  (you are running -30)
+19:59:37  dkms add / build / install
+          -> builds for the RUNNING kernel only, -30
+```
+
+DKMS' autoinstall hook fires **when a kernel is installed**. At 19:58 the module did not
+exist yet, so nothing was built for `-31`. `dkms status` then shows only `-30`, which
+looks perfectly healthy — until you reboot into `-31` and the module is simply absent:
+
+```
+ERROR: Could not find hwmon device with name 'zettlab_d8_fans'.
+hdd-fan-curve.service: Failed with result 'exit-code'.
+```
+
+**Both fan services fail and the fans revert to whatever the firmware last set.**
+
+### Cover every installed kernel after adding the module
+
+```bash
+sudo dkms autoinstall
+sudo dkms status            # expect a line per installed kernel, not just one
+```
+
+Or target one explicitly:
+
+```bash
+sudo dkms install -m zettlab-d8-fans -v 0.0.1 -k 7.0.0-31-generic
+```
+
+Once the module is registered for every installed kernel, later upgrades do rebuild it
+automatically — the hook works, it just had nothing to act on the first time.
+
+### Verify before you trust it
+
+`dkms status` showing one kernel is the tell. Compare it against what is installed:
+
+```bash
+ls /lib/modules | sort
+dkms status
+```
+
+Any kernel in the first list that is missing from the second will boot without your
+module.
+
 ## After Kernel Updates
 
 When Ubuntu installs a new kernel, DKMS should automatically rebuild the `zettlab_d8-fans` module for the new kernel. If it doesn't (you may see `Exec format error` or fan services failing), rebuild manually:
