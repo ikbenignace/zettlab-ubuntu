@@ -81,13 +81,21 @@ module expose the same three fans under different names:
 | | Stock `zettos_pwm_fan` | Community `zettlab_d8_fans` |
 |---|---|---|
 | PWM | `fan1_pwm` … `fan3_pwm` | `pwm1` … `pwm3` |
-| Tachometer | `fan1_input` … `fan3_input` (RPM) | — |
+| PWM mode | — | `pwm1_enable` … `pwm3_enable` |
+| Tachometer | `fan1_input` … `fan3_input` | `fan1_input` … `fan3_input` |
+| Labels | — | `fan1_label` … `fan3_label` |
 
-The stock driver reports real RPM — roughly 900 rpm on the disk fans at PWM 91, and
-2800 rpm on the CPU fan at PWM 124, confirming fan3 is the CPU fan. The community
-module provides no tachometer feedback, so the fan curve scripts cannot detect a
-stalled fan. `zettlab-tui.py` in this repo handles both naming schemes and shows RPM
-when the driver offers it.
+Both drivers report real RPM. Only the PWM attribute names differ, so a tool that
+reads tachometers works against either — `zettlab-tui.py` in this repo handles both
+spellings.
+
+The community module additionally exposes `fanN_label`, which confirms the mapping
+directly on a running system: `fan1` and `fan2` are `Disks 1` / `Disks 2`, `fan3` is
+`CPU`.
+
+Neither fan curve script in this repo reads `fanN_input`. They set PWM open-loop and
+never check whether the fan actually spun up, so a stalled or disconnected fan goes
+unnoticed. The tachometer data is there if you want to add that check.
 
 ### Extra temperature sensors
 
