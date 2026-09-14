@@ -1,50 +1,57 @@
 #!/usr/bin/env python3
-"""Render system stats to the Zettlab front LCD (eDP-1, 172x640 portrait).
+"""Render a system dashboard to the Zettlab front LCD (eDP-1, 172x640 portrait).
 
-Layout: header (host / clock / IP), a stats band (storage gauge, CPU, memory,
-fans), and a per-drive strip showing SMART health and temperature. Drives are
-discovered at runtime, so the strip scales from one disk to a fully populated
-8-bay chassis plus NVMe.
+Header (host / health badge / clock / IP), four stat cards (storage, CPU,
+memory, fans), and one card per drive with SMART health and temperature.
+Drives are discovered at runtime, so the strip scales to a full chassis.
 """
 import glob, os, re, socket, subprocess, sys, time
 from PIL import Image, ImageDraw, ImageFont
 
 FB = "/dev/fb0"
-PW, PH, STRIDE, BPP = 172, 640, 704, 4      # panel is portrait
-CW, CH = PH, PW                              # canvas is landscape 640x172
-ROTATE = Image.ROTATE_270                    # flip to ROTATE_90 if upside down
+PW, PH, STRIDE, BPP = 172, 640, 704, 4
+CW, CH = PH, PW                                  # canvas is landscape 640x172
+ROTATE = Image.ROTATE_270
 INTERVAL = 5
-SMART_EVERY = 24                             # smartctl is slow; ~2 min between polls
+SMART_EVERY = 24
 
 MONO = "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf"
 SANS = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
-n_xl = ImageFont.truetype(MONO, 26)
-n_lg = ImageFont.truetype(MONO, 20)
-n_md = ImageFont.truetype(MONO, 17)
-n_sm = ImageFont.truetype(MONO, 14)
-l_sm = ImageFont.truetype(SANS, 12)
-l_xs = ImageFont.truetype(SANS, 10)
+F = lambda p, s: ImageFont.truetype(p, s)
+f_clock  = F(MONO, 25)
+f_host   = F(SANS, 19)
+f_ip     = F(MONO, 14)
+f_val    = F(MONO, 21)
+f_val_sm = F(MONO, 16)
+f_fan    = F(MONO, 15)
+f_drive  = F(MONO, 14)
+f_lbl    = F(SANS, 10)
+f_tiny   = F(SANS, 8)
+f_unit   = F(SANS, 9)
 
-BG      = (9, 11, 16)
-CARD    = (20, 24, 33)
-CARD_HI = (32, 37, 50)
-LABEL   = (118, 126, 145)
-TEXT    = (226, 230, 240)
-ACCENT  = (86, 160, 255)
-OK      = (72, 210, 140)
-WARN    = (255, 176, 58)
-BAD     = (255, 88, 82)
-UNKNOWN = (110, 116, 132)
+BG        = (5, 7, 11)
+CARD      = (15, 19, 24)
+CARD_EDGE = (27, 33, 41)
+TRACK     = (30, 37, 48)
+WHITE     = (241, 245, 249)
+GREY      = (139, 149, 165)
+GREEN     = (52, 211, 153)
+AMBER     = (245, 158, 11)
+RED       = (239, 68, 68)
+RED_CARD  = (42, 15, 17)
+RED_EDGE  = (127, 29, 29)
+DIVIDER   = (36, 43, 54)
 
-HEAD = (6, 4, 634, 32)                       # header card
-BODY = (6, 36, 634, 116)                     # stats card
-FOOT = (6, 120, 634, 168)                    # drive strip card
+M = 6                                            # outer margin
+HEAD = (M, 3, CW - M, 33)
+ROW2_T, ROW2_B = 37, 111
+ROW3_T, ROW3_B = 115, CH - 3
 
 REAL_FS = {"ext4", "ext3", "xfs", "btrfs", "zfs", "f2fs", "jfs", "reiserfs"}
+BAD_ATTRS = ("5", "197", "198")
 
-# SMART attributes that mean "this disk is degrading" when non-zero
-BAD_ATTRS = {"5": "reallocated", "197": "pending", "198": "uncorrectable"}
 
+# ---------------------------------------------------------------- sensors
 
 def hwmon_named(name):
     for d in sorted(glob.glob("/sys/class/hwmon/hwmon*")):
@@ -90,51 +97,41 @@ def cpu_busy():
 
 def fans():
     if not HW:
-        return []
+        return [(None, None)] * 3
     return [(read_int(f"{HW}/fan{n}_input"), read_int(f"{HW}/pwm{n}")) for n in (1, 2, 3)]
 
 
-# ---------------------------------------------------------------- drives
-
 def discover():
-    """Every real block device, found at runtime — never a fixed list."""
-    devs = []
-    for path in sorted(glob.glob("/dev/sd[a-z]")):
-        devs.append((path, os.path.basename(path)))          # sda, sdb, ...
-    for path in sorted(glob.glob("/dev/nvme[0-9]n[0-9]")):
-        m = re.search(r"nvme(\d+)n", path)
-        devs.append((path, f"nv{m.group(1)}" if m else os.path.basename(path)))
+    devs = [(p, os.path.basename(p)) for p in sorted(glob.glob("/dev/sd[a-z]"))]
+    for p in sorted(glob.glob("/dev/nvme[0-9]n[0-9]")):
+        m = re.search(r"nvme(\d+)n", p)
+        devs.append((p, f"nv{m.group(1)}" if m else os.path.basename(p)))
     return devs
 
 
-_last = {}          # name -> (temp, health) so a sleeping disk keeps its reading
+_last = {}
 
 
 def probe(path, name):
-    """Return (temp, health) with health in ok / warn / bad / unknown."""
     try:
         r = subprocess.run(["smartctl", "-H", "-A", "-n", "standby", path],
                            capture_output=True, text=True, timeout=12)
     except Exception:
         return _last.get(name, (None, "unknown"))
-
     out = r.stdout
-    if "STANDBY" in out.upper() and "Device is in" in out:
-        return _last.get(name, (None, "unknown"))           # asleep, do not wake it
+    if "Device is in" in out and "STANDBY" in out.upper():
+        return _last.get(name, (None, "unknown"))
 
     temp, health = None, "unknown"
-
-    if re.search(r"self-assessment test result:\s*PASSED", out):
+    if re.search(r"self-assessment test result:\s*PASSED", out) or \
+            "SMART Health Status: OK" in out:
         health = "ok"
-    elif re.search(r"self-assessment test result:\s*FAILED", out) or \
-            re.search(r"SMART Health Status:\s*FAILED", out):
+    if re.search(r"self-assessment test result:\s*FAILED", out) or \
+            "SMART Health Status: FAILED" in out:
         health = "bad"
-    elif re.search(r"SMART overall-health.*OK", out) or "SMART Health Status: OK" in out:
-        health = "ok"
 
     for line in out.splitlines():
         p = line.split()
-        # SATA attribute table: ID# NAME FLAG VAL WORST THRESH TYPE UPDATED WHEN RAW
         if len(p) >= 10 and p[0].isdigit():
             if p[0] in ("194", "190") and temp is None:
                 try:
@@ -147,18 +144,13 @@ def probe(path, name):
                         health = "warn"
                 except ValueError:
                     pass
-        # NVMe key/value block
         if temp is None and line.startswith("Temperature:"):
             m = re.search(r"(\d+)\s*Celsius", line)
             if m:
                 temp = int(m.group(1))
-        if line.startswith("Critical Warning:") and health == "ok":
-            if line.split(":")[1].strip() not in ("0x00", "0"):
-                health = "warn"
-        if line.startswith("Media and Data Integrity Errors:") and health == "ok":
-            if line.split(":")[1].strip().replace(",", "") not in ("0",):
-                health = "warn"
-
+        if health == "ok" and line.startswith("Critical Warning:") and \
+                line.split(":")[1].strip() not in ("0x00", "0"):
+            health = "warn"
     if temp is None:
         temp = _last.get(name, (None, None))[0]
     _last[name] = (temp, health)
@@ -166,31 +158,32 @@ def probe(path, name):
 
 
 def drives():
-    return [(name, *probe(path, name)) for path, name in discover()]
+    return [(n, *probe(p, n)) for p, n in discover()]
 
 
-def temp_state(name, temp):
-    """Colour a temperature: NVMe runs hotter than spinning rust by design."""
+def drive_limits(name):
+    return (60, 72) if name.startswith("nv") else (47, 55)
+
+
+def temp_col(name, temp):
     if temp is None:
-        return UNKNOWN
-    warm, hot = (60, 72) if name.startswith("nv") else (47, 55)
-    return BAD if temp >= hot else WARN if temp >= warm else OK
+        return GREY
+    warm, hot = drive_limits(name)
+    return RED if temp >= hot else AMBER if temp >= warm else GREEN
 
 
-HEALTH_COL = {"ok": OK, "warn": WARN, "bad": BAD, "unknown": UNKNOWN}
+HEALTH_COL = {"ok": GREEN, "warn": AMBER, "bad": RED, "unknown": GREY}
 
-
-# ---------------------------------------------------------------- system
 
 def storage():
     used = total = 0
     seen = set()
     for line in open("/proc/mounts"):
-        parts = line.split()
-        if len(parts) < 3 or parts[2] not in REAL_FS:
+        p = line.split()
+        if len(p) < 3 or p[2] not in REAL_FS:
             continue
         try:
-            st = os.statvfs(parts[1])
+            st = os.statvfs(p[1])
         except OSError:
             continue
         key = (st.f_blocks, st.f_frsize, st.f_fsid)
@@ -211,9 +204,8 @@ def mem():
     for line in open("/proc/meminfo"):
         k, v = line.split(":", 1)
         m[k] = int(v.split()[0])
-    total = m["MemTotal"]
-    avail = m.get("MemAvailable", m["MemFree"])
-    return (total - avail) / 1048576.0, total / 1048576.0
+    t = m["MemTotal"]
+    return (t - m.get("MemAvailable", m["MemFree"])) / 1048576.0, t / 1048576.0
 
 
 def ip():
@@ -234,109 +226,195 @@ def uptime():
     return f"{d}d {h}h" if d else f"{h}h {s // 60}m"
 
 
-def heat(t, warm, hot):
-    if t is None:
-        return UNKNOWN
-    return BAD if t >= hot else WARN if t >= warm else OK
+def cpu_col(t):
+    return GREY if t is None else RED if t >= 85 else AMBER if t >= 70 else GREEN
 
 
-# ---------------------------------------------------------------- render
+# ---------------------------------------------------------------- drawing
 
 def frame(dr):
     img = Image.new("RGB", (CW, CH), BG)
     d = ImageDraw.Draw(img)
 
+    def tw(txt, font):
+        return d.textlength(txt, font=font)
+
     def ctext(cx, y, txt, font, fill):
-        d.text((cx - d.textlength(txt, font=font) / 2, y), txt, font=font, fill=fill)
+        d.text((cx - tw(txt, font) / 2, y), txt, font=font, fill=fill)
 
     def rtext(x, y, txt, font, fill):
-        d.text((x - d.textlength(txt, font=font), y), txt, font=font, fill=fill)
+        d.text((x - tw(txt, font), y), txt, font=font, fill=fill)
 
-    def meter(x, y, w, h, frac, col):
-        d.rounded_rectangle([x, y, x + w, y + h], radius=h // 2, fill=CARD_HI)
+    def card(box, fill=CARD, edge=CARD_EDGE):
+        d.rounded_rectangle(box, radius=7, fill=fill, outline=edge, width=1)
+
+    def bar(x, y, w, h, frac, col):
+        d.rounded_rectangle([x, y, x + w, y + h], radius=h // 2, fill=TRACK)
         fw = int(w * max(0.0, min(frac, 1.0)))
-        if fw > h:
+        if fw >= h:
             d.rounded_rectangle([x, y, x + fw, y + h], radius=h // 2, fill=col)
         elif fw > 0:
             d.ellipse([x, y, x + h, y + h], fill=col)
 
-    for card in (HEAD, BODY, FOOT):
-        d.rounded_rectangle(card, radius=9, fill=CARD)
+    # --- tiny glyphs, approximations of the mockup's icons ---------------
+    def ic_storage(x, y, c=GREY):
+        for i in range(3):
+            d.ellipse([x, y + i * 4, x + 11, y + 6 + i * 4], outline=c)
 
-    # ---- header: host + health badge | clock | ip ------------------------
-    host = socket.gethostname()
-    d.text((16, 8), host, font=n_lg, fill=ACCENT)
+    def ic_cpu(x, y, c=GREY):
+        d.rounded_rectangle([x + 2, y + 2, x + 11, y + 11], radius=2, outline=c)
+        d.rectangle([x + 5, y + 5, x + 8, y + 8], outline=c)
+        for o in (4, 8):
+            d.line([(x + o, y), (x + o, y + 2)], fill=c)
+            d.line([(x + o, y + 11), (x + o, y + 13)], fill=c)
+
+    def ic_mem(x, y, c=GREY):
+        d.rounded_rectangle([x, y + 2, x + 13, y + 10], radius=1, outline=c)
+        for o in (3, 6, 9):
+            d.line([(x + o, y + 5), (x + o, y + 8)], fill=c)
+
+    def ic_fan(x, y, c=GREY):
+        d.ellipse([x + 5, y + 5, x + 8, y + 8], outline=c)
+        for dx, dy in ((0, -5), (5, 3), (-5, 3)):
+            d.ellipse([x + 5 + dx - 3, y + 6 + dy - 3,
+                       x + 5 + dx + 3, y + 6 + dy + 3], outline=c)
+
+    def ic_globe(x, y, c=GREY):
+        d.ellipse([x, y, x + 11, y + 11], outline=c)
+        d.ellipse([x + 3, y, x + 8, y + 11], outline=c)
+        d.line([(x, y + 5), (x + 11, y + 5)], fill=c)
+
+    def ic_clock(x, y, c=GREY):
+        d.ellipse([x, y, x + 9, y + 9], outline=c)
+        d.line([(x + 4, y + 4), (x + 4, y + 2)], fill=c)
+        d.line([(x + 4, y + 4), (x + 6, y + 5)], fill=c)
+
+    # ---- header ---------------------------------------------------------
+    card(HEAD)
+    hy = HEAD[1]
+    d.ellipse([M + 10, hy + 12, M + 16, hy + 18], fill=GREEN)
+    host = socket.gethostname().upper()
+    d.text((M + 24, hy + 5), host, font=f_host, fill=WHITE)
+
+    bad = sum(1 for _, _, h in dr if h == "bad")
+    warn = sum(1 for _, _, h in dr if h == "warn")
     if dr:
-        bad = sum(1 for _, _, h in dr if h == "bad")
-        warn = sum(1 for _, _, h in dr if h == "warn")
-        msg = (f"{bad} FAILING" if bad else
-               f"{warn} WARNING" if warn else f"{len(dr)} OK")
-        col = BAD if bad else WARN if warn else OK
-        bx = 16 + d.textlength(host, font=n_lg) + 12
-        bw = d.textlength(msg, font=l_xs) + 14
-        d.rounded_rectangle([bx, 11, bx + bw, 26], radius=7, fill=CARD_HI)
-        d.text((bx + 7, 14), msg, font=l_xs, fill=col)
-    ctext(CW // 2, 7, time.strftime("%H:%M"), n_xl, TEXT)
-    rtext(CW - 16, 10, ip(), n_md, TEXT)
+        msg = f"{bad} FAILING" if bad else f"{warn} WARNING" if warn else f"{len(dr)} OK"
+        col = RED if bad else AMBER if warn else GREEN
+        bx = M + 24 + tw(host, f_host) + 10
+        bw = tw(msg, f_lbl) + 24
+        d.rounded_rectangle([bx, hy + 7, bx + bw, hy + 23], radius=8, outline=col)
+        d.ellipse([bx + 6, hy + 12, bx + 12, hy + 18], outline=col)
+        d.line([(bx + 9, hy + 13), (bx + 9, hy + 16)], fill=col)
+        d.text((bx + 17, hy + 10), msg, font=f_lbl, fill=col)
 
-    # ---- body left: storage gauge ---------------------------------------
-    used, total = storage()
-    frac = used / total if total else 0
-    cx, cy, r = 66, 74, 30
-    box = [cx - r, cy - r, cx + r, cy + r]
-    d.arc(box, 130, 410, fill=CARD_HI, width=8)
+    ctext(CW // 2, hy + 2, time.strftime("%H:%M"), f_clock, WHITE)
+    addr = ip()
+    d.ellipse([CW - M - 16, hy + 12, CW - M - 10, hy + 18], fill=GREEN)
+    rtext(CW - M - 22, hy + 8, addr, f_ip, WHITE)
+    ic_globe(CW - M - 28 - tw(addr, f_ip) - 12, hy + 9)
+
+    # ---- row 2: four cards ----------------------------------------------
+    gap, n = 5, 4
+    total_w = (CW - M) - M
+    cw_ = (total_w - gap * (n - 1)) // n
+    xs = [M + i * (cw_ + gap) for i in range(n)]
+
+    # storage
+    x = xs[0]
+    card((x, ROW2_T, x + cw_, ROW2_B))
+    ic_storage(x + 9, ROW2_T + 8)
+    d.text((x + 26, ROW2_T + 8), "STORAGE", font=f_lbl, fill=WHITE)
+    used, tot = storage()
+    frac = used / tot if tot else 0
+    rcx, rcy, rr = x + 36, ROW2_T + 47, 21
+    d.ellipse([rcx - rr, rcy - rr, rcx + rr, rcy + rr], outline=TRACK, width=6)
     if frac > 0:
-        col = BAD if frac > .9 else WARN if frac > .75 else ACCENT
-        d.arc(box, 130, 130 + int(280 * frac), fill=col, width=8)
-    ctext(cx, cy - 12, f"{frac * 100:.0f}%", n_md, TEXT)
-    ctext(cx, 44, "STORAGE", l_xs, LABEL)
-    ctext(cx, 104, f"{human(used)} / {human(total)}", l_xs, LABEL)
+        col = RED if frac > .9 else AMBER if frac > .75 else GREEN
+        d.arc([rcx - rr, rcy - rr, rcx + rr, rcy + rr], -90,
+              -90 + max(6, int(360 * frac)), fill=col, width=6)
+    ctext(rcx, rcy - 9, f"{frac * 100:.0f}%", f_val_sm, WHITE)
+    tx = x + 66
+    d.text((tx, ROW2_T + 23), "USED", font=f_tiny, fill=GREY)
+    d.text((tx, ROW2_T + 31), human(used), font=f_drive, fill=WHITE)
+    d.line([(tx, ROW2_T + 48), (x + cw_ - 10, ROW2_T + 48)], fill=DIVIDER)
+    d.text((tx, ROW2_T + 52), "TOTAL", font=f_tiny, fill=GREY)
+    d.text((tx, ROW2_T + 60), human(tot), font=f_drive, fill=WHITE)
 
-    # ---- body middle: cpu + memory --------------------------------------
-    x0, x1 = 120, 404
+    # cpu
+    x = xs[1]
+    card((x, ROW2_T, x + cw_, ROW2_B))
+    ic_cpu(x + 9, ROW2_T + 7)
+    d.text((x + 26, ROW2_T + 8), "CPU", font=f_lbl, fill=WHITE)
     ct, busy = cpu_temp(), cpu_busy()
-    cv = f"{ct:.0f}C" if ct else "--"
-    d.text((x0, 48), "CPU", font=l_sm, fill=LABEL)
-    d.text((x0 + 40, 44), cv, font=n_lg, fill=heat(ct, 70, 85))
-    rtext(x1, 46, f"{busy:.0f}%", n_md, TEXT)
-    meter(x0, 68, x1 - x0, 6, busy / 100, ACCENT)
+    cv = f"{ct:.0f}" if ct else "--"
+    d.text((x + 10, ROW2_T + 28), cv, font=f_val, fill=cpu_col(ct))
+    d.text((x + 12 + tw(cv, f_val), ROW2_T + 38), "°C", font=f_unit, fill=cpu_col(ct))
+    d.line([(x + 74, ROW2_T + 24), (x + 74, ROW2_T + 54)], fill=DIVIDER)
+    d.text((x + 82, ROW2_T + 26), "UTIL", font=f_tiny, fill=GREY)
+    d.text((x + 82, ROW2_T + 35), f"{busy:.0f}%", font=f_val_sm, fill=WHITE)
+    bar(x + 10, ROW2_T + 62, cw_ - 20, 6, busy / 100, GREEN)
 
+    # memory
+    x = xs[2]
+    card((x, ROW2_T, x + cw_, ROW2_B))
+    ic_mem(x + 9, ROW2_T + 7)
+    d.text((x + 26, ROW2_T + 8), "MEMORY", font=f_lbl, fill=WHITE)
     mu, mt = mem()
-    d.text((x0, 84), "MEM", font=l_sm, fill=LABEL)
-    d.text((x0 + 40, 80), f"{mu:.1f}/{mt:.0f}G", font=n_lg, fill=TEXT)
-    rtext(x1, 82, f"{100 * mu / mt:.0f}%", n_md, TEXT)
-    meter(x0, 104, x1 - x0, 6, mu / mt, OK)
+    mv = f"{mu:.1f}"
+    d.text((x + 10, ROW2_T + 28), mv, font=f_val, fill=WHITE)
+    d.text((x + 12 + tw(mv, f_val), ROW2_T + 38), f"/{mt:.0f}G", font=f_unit, fill=GREY)
+    d.line([(x + 74, ROW2_T + 24), (x + 74, ROW2_T + 54)], fill=DIVIDER)
+    d.text((x + 82, ROW2_T + 26), "UTIL", font=f_tiny, fill=GREY)
+    d.text((x + 82, ROW2_T + 35), f"{100 * mu / mt:.0f}%", font=f_val_sm, fill=WHITE)
+    bar(x + 10, ROW2_T + 62, cw_ - 20, 6, mu / mt, GREEN)
 
-    # ---- body right: fans + uptime --------------------------------------
-    fx = 420
-    d.text((fx, 44), "FANS", font=l_xs, fill=LABEL)
-    for lab, (rpm, pwm), px in zip(("D1", "D2", "CPU"),
-                                   fans() or [(None, None)] * 3,
-                                   (fx, fx + 72, fx + 144)):
-        col = OK if rpm else BAD
-        d.text((px, 58), lab, font=l_xs, fill=LABEL)
-        d.text((px, 70), f"{rpm if rpm is not None else 0}", font=n_sm, fill=col)
-        d.text((px, 88), f"pwm {pwm if pwm is not None else 0}", font=l_xs, fill=LABEL)
-    d.text((fx, 104), f"up {uptime()}", font=l_xs, fill=LABEL)
+    # fans
+    x = xs[3]
+    card((x, ROW2_T, x + cw_, ROW2_B))
+    ic_fan(x + 8, ROW2_T + 7)
+    d.text((x + 26, ROW2_T + 8), "FANS", font=f_lbl, fill=WHITE)
+    fl = fans()
+    colw = (cw_ - 16) // 3
+    for i, (lab, (rpm, pwm)) in enumerate(zip(("D1", "D2", "CPU"), fl)):
+        fx = x + 9 + i * colw
+        if i:
+            d.line([(fx - 5, ROW2_T + 22), (fx - 5, ROW2_T + 56)], fill=DIVIDER)
+        d.text((fx, ROW2_T + 23), lab, font=f_tiny, fill=WHITE)
+        d.text((fx, ROW2_T + 32), f"{rpm if rpm is not None else 0}",
+               font=f_fan, fill=GREEN if rpm else RED)
+        d.text((fx, ROW2_T + 49), "rpm", font=f_tiny, fill=GREY)
+    d.line([(x + 9, ROW2_T + 60), (x + cw_ - 9, ROW2_T + 60)], fill=DIVIDER)
+    ic_clock(x + 10, ROW2_T + 64)
+    d.text((x + 23, ROW2_T + 63), f"up {uptime()}", font=f_lbl, fill=WHITE)
 
-    # ---- footer: one cell per drive, auto-sized --------------------------
+    # ---- row 3: one card per drive --------------------------------------
     if dr:
-        pad, top = 14, FOOT[1]
-        avail = (FOOT[2] - FOOT[0]) - pad * 2
-        cell = max(40, min(72, avail // max(1, len(dr))))
-        for i, (name, temp, health) in enumerate(dr[:12]):
-            px = FOOT[0] + pad + i * cell
-            hc = HEALTH_COL.get(health, UNKNOWN)
-            d.ellipse([px, top + 10, px + 7, top + 17], fill=hc)
-            d.text((px + 12, top + 8), name, font=l_xs, fill=LABEL)
+        n = min(len(dr), 12)
+        g = 4
+        dw = (total_w - g * (n - 1)) / n
+        for i, (name, temp, health) in enumerate(dr[:n]):
+            x = M + i * (dw + g)
+            failing = health == "bad"
+            card((x, ROW3_T, x + dw, ROW3_B),
+                 RED_CARD if failing else CARD, RED_EDGE if failing else CARD_EDGE)
+            hc = HEALTH_COL.get(health, GREY)
+            d.ellipse([x + 7, ROW3_T + 9, x + 13, ROW3_T + 15], fill=hc)
+            d.text((x + 17, ROW3_T + 7), name, font=f_lbl, fill=WHITE)
+            tc = temp_col(name, temp)
             tv = f"{temp}" if temp is not None else "--"
-            d.text((px + 12, top + 22), tv, font=n_sm, fill=temp_state(name, temp))
+            d.text((x + 11, ROW3_T + 21), tv, font=f_drive, fill=tc)
+            d.text((x + 13 + tw(tv, f_drive), ROW3_T + 27), "°C",
+                   font=f_tiny, fill=tc)
+            warm, hot = drive_limits(name)
+            frac = 0 if temp is None else max(.06, min(1.0, temp / (hot + 8)))
+            bar(x + 8, ROW3_B - 11, dw - 16, 4, frac, tc)
     return img
 
 
 def blit(img):
-    img = img.transpose(ROTATE)                       # -> 172x640
-    raw = img.tobytes("raw", "BGRX")                  # i915 XRGB8888 LE
+    img = img.transpose(ROTATE)
+    raw = img.tobytes("raw", "BGRX")
     row = PW * BPP
     with open(FB, "r+b", buffering=0) as fh:
         for y in range(PH):
