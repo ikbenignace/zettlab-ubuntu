@@ -131,7 +131,7 @@ A `*.sparsebundle` under a share is a macOS Time Machine backup and is often the
 | | Verdict |
 |---|---|
 | **Ubuntu 26.04** | Recommended. The Intel compute stack (`intel-opencl-icd`, `libze-intel-gpu1`, `intel-ocloc`) is in apt, and ZFS ships in `main`. |
-| **Debian 13** | Workable, more manual. Those Intel packages were dropped from trixie and must come from Intel's GitHub `.deb` releases. See the `debian` branch of this repo. |
+| **Debian 13** | Workable, but more manual. `intel-opencl-icd`, `libze-intel-gpu1` and `intel-ocloc` were dropped from trixie and must be installed from Intel's GitHub `.deb` releases. The chassis button module also needs a compat shim, because Debian's 6.12 kernel predates the `timer_container_of()` rename in 6.16. |
 | **TrueNAS SCALE** | Strong NAS features, but it owns its own Docker daemon, and this hardware requires a USB Ethernet adapter — a combination TrueNAS handles poorly. Reasonable if you want an appliance and run nothing custom. |
 
 ## Choosing a Storage Layout
