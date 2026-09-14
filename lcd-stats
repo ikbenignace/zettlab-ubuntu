@@ -10,21 +10,29 @@ ROTATE = Image.ROTATE_270                    # flip to ROTATE_90 if upside down
 INTERVAL = 5
 SMART_EVERY = 12                             # smartctl is slow; poll it less often
 
-FONT = "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf"
-f_xl = ImageFont.truetype(FONT, 30)
-f_big = ImageFont.truetype(FONT, 26)
-f_med = ImageFont.truetype(FONT, 20)
-f_sml = ImageFont.truetype(FONT, 16)
-f_tiny = ImageFont.truetype(FONT, 13)
+MONO = "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf"
+SANS = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+n_xl = ImageFont.truetype(MONO, 31)          # numbers
+n_lg = ImageFont.truetype(MONO, 24)
+n_md = ImageFont.truetype(MONO, 18)
+n_sm = ImageFont.truetype(MONO, 15)
+l_sm = ImageFont.truetype(SANS, 12)          # labels
+l_xs = ImageFont.truetype(SANS, 10)
 
-GREY, DIM, RULE = (140, 140, 150), (105, 105, 115), (46, 46, 54)
-ACCENT, TEXT = (90, 150, 220), (208, 208, 226)
+BG      = (9, 11, 16)
+CARD    = (20, 24, 33)
+CARD_HI = (30, 35, 47)
+LABEL   = (118, 126, 145)
+TEXT    = (226, 230, 240)
+ACCENT  = (86, 160, 255)
+OK      = (72, 210, 140)
+WARN    = (255, 176, 58)
+HOT     = (255, 88, 82)
 
-GAUGE_CX, GAUGE_CY, GAUGE_R = 68, 76, 47     # storage arc
-MID_X, MID_W = 128, 268                      # middle column
-SPLIT = 404                                  # right column starts
+C1 = (6, 6, 124, 166)            # storage card
+C2 = (130, 6, 398, 166)          # meters / drives / fans card
+C3 = (404, 6, 634, 166)          # identity card
 
-# filesystem types that count towards "storage"
 REAL_FS = {"ext4", "ext3", "xfs", "btrfs", "zfs", "f2fs", "jfs", "reiserfs"}
 
 
@@ -59,10 +67,8 @@ _prev_cpu = None
 
 
 def cpu_busy():
-    """Percentage busy since the previous call."""
     global _prev_cpu
-    parts = open("/proc/stat").readline().split()[1:8]
-    vals = [int(x) for x in parts]
+    vals = [int(x) for x in open("/proc/stat").readline().split()[1:8]]
     idle, total = vals[3] + vals[4], sum(vals)
     if _prev_cpu is None:
         _prev_cpu = (idle, total)
@@ -79,7 +85,6 @@ def fans():
 
 
 def disk_temps():
-    """SATA devices via SMART. Slow — cached by the caller."""
     res = []
     for dev in sorted(glob.glob("/dev/sd[a-z]")):
         try:
@@ -105,16 +110,14 @@ def nvme_temps():
 
 
 def storage():
-    """Total used / total size across real filesystems, in bytes."""
     used = total = 0
     seen = set()
     for line in open("/proc/mounts"):
         parts = line.split()
         if len(parts) < 3 or parts[2] not in REAL_FS:
             continue
-        mp = parts[1]
         try:
-            st = os.statvfs(mp)
+            st = os.statvfs(parts[1])
         except OSError:
             continue
         key = (st.f_blocks, st.f_frsize, st.f_fsid)
@@ -126,11 +129,8 @@ def storage():
     return used, total
 
 
-def human_tb(n):
-    tb = n / 1e12
-    if tb >= 1:
-        return f"{tb:.1f}TB"
-    return f"{n / 1e9:.0f}GB"
+def human(n):
+    return f"{n / 1e12:.1f}TB" if n >= 1e12 else f"{n / 1e9:.0f}GB"
 
 
 def mem():
@@ -163,22 +163,12 @@ def uptime():
 
 def heat(t, warm, hot):
     if t is None:
-        return (120, 120, 120)
-    if t >= hot:
-        return (255, 70, 60)
-    if t >= warm:
-        return (255, 170, 40)
-    return (90, 220, 130)
-
-
-def bar(d, x, y, w, h, frac, fill):
-    d.rectangle([x, y, x + w, y + h], outline=(62, 62, 70))
-    if frac > 0:
-        d.rectangle([x, y, x + max(2, int(w * min(frac, 1.0))), y + h], fill=fill)
+        return LABEL
+    return HOT if t >= hot else WARN if t >= warm else OK
 
 
 def frame(hdd):
-    img = Image.new("RGB", (CW, CH), (0, 0, 0))
+    img = Image.new("RGB", (CW, CH), BG)
     d = ImageDraw.Draw(img)
 
     def ctext(cx, y, txt, font, fill):
@@ -187,64 +177,80 @@ def frame(hdd):
     def rtext(x, y, txt, font, fill):
         d.text((x - d.textlength(txt, font=font), y), txt, font=font, fill=fill)
 
+    def meter(x, y, w, h, frac, col):
+        d.rounded_rectangle([x, y, x + w, y + h], radius=h // 2, fill=CARD_HI)
+        fw = int(w * max(0.0, min(frac, 1.0)))
+        if fw > h:
+            d.rounded_rectangle([x, y, x + fw, y + h], radius=h // 2, fill=col)
+        elif fw > 0:
+            d.ellipse([x, y, x + h, y + h], fill=col)
+
+    for card in (C1, C2, C3):
+        d.rounded_rectangle(card, radius=10, fill=CARD)
+
     nvme = nvme_temps()
 
-    # ---- storage gauge (left) ------------------------------------------
+    # ---- card 1: storage ------------------------------------------------
     used, total = storage()
     frac = used / total if total else 0
-    box = [GAUGE_CX - GAUGE_R, GAUGE_CY - GAUGE_R,
-           GAUGE_CX + GAUGE_R, GAUGE_CY + GAUGE_R]
-    d.arc(box, 135, 405, fill=(52, 52, 60), width=11)
+    cx, cy, r = (C1[0] + C1[2]) // 2, 74, 42
+    box = [cx - r, cy - r, cx + r, cy + r]
+    d.arc(box, 130, 410, fill=CARD_HI, width=10)
     if frac > 0:
-        col = (235, 80, 70) if frac > .9 else (240, 170, 50) if frac > .75 else ACCENT
-        d.arc(box, 135, 135 + int(270 * frac), fill=col, width=11)
-    ctext(GAUGE_CX, GAUGE_CY - 22, f"{frac * 100:.0f}%", f_xl, TEXT)
-    ctext(GAUGE_CX, GAUGE_CY + 8, human_tb(used), f_med, TEXT)
-    ctext(GAUGE_CX, GAUGE_CY + 32, f"/ {human_tb(total)}", f_tiny, DIM)
-    ctext(GAUGE_CX, CH - 18, "STORAGE", f_tiny, GREY)
+        col = HOT if frac > .9 else WARN if frac > .75 else ACCENT
+        d.arc(box, 130, 130 + int(280 * frac), fill=col, width=10)
+    ctext(cx, 14, "STORAGE", l_xs, LABEL)
+    ctext(cx, cy - 22, f"{frac * 100:.0f}", n_xl, TEXT)
+    ctext(cx, cy + 12, "%", l_sm, LABEL)
+    ctext(cx, 126, human(used), n_md, TEXT)
+    ctext(cx, 147, f"of {human(total)}", l_xs, LABEL)
 
-    # ---- middle column --------------------------------------------------
+    # ---- card 2: meters, drives, fans -----------------------------------
+    x0, x1 = C2[0] + 14, C2[2] - 14
+    w = x1 - x0
+
     ct = cpu_temp()
     busy = cpu_busy()
-    d.text((MID_X, 2), "CPU", font=f_sml, fill=GREY)
-    d.text((MID_X + 44, 0), f"{ct:.0f}C" if ct else "--", font=f_big,
+    cv = f"{ct:.0f}" if ct else "--"
+    d.text((x0, 16), "CPU", font=l_sm, fill=LABEL)
+    d.text((x0 + 42, 10), cv, font=n_lg, fill=heat(ct, 70, 85))
+    d.text((x0 + 44 + d.textlength(cv, font=n_lg), 18), "C", font=l_sm,
            fill=heat(ct, 70, 85))
-    rtext(MID_X + MID_W, 4, f"{busy:.0f}%", f_med, TEXT)
-    bar(d, MID_X, 30, MID_W, 9, busy / 100, ACCENT)
+    rtext(x1, 14, f"{busy:.0f}%", n_md, TEXT)
+    meter(x0, 40, w, 7, busy / 100, ACCENT)
 
     mu, mt = mem()
-    d.text((MID_X, 46), "MEM", font=f_sml, fill=GREY)
-    d.text((MID_X + 44, 44), f"{mu:.1f}/{mt:.0f}G", font=f_med, fill=TEXT)
-    rtext(MID_X + MID_W, 48, f"{100 * mu / mt:.0f}%", f_med, TEXT)
-    bar(d, MID_X, 70, MID_W, 9, mu / mt, (120, 190, 140))
+    d.text((x0, 58), "MEM", font=l_sm, fill=LABEL)
+    d.text((x0 + 42, 54), f"{mu:.1f}/{mt:.0f}G", font=n_md, fill=TEXT)
+    rtext(x1, 56, f"{100 * mu / mt:.0f}%", n_md, TEXT)
+    meter(x0, 78, w, 7, mu / mt, OK)
 
-    # drives
-    d.line([(MID_X, 88), (MID_X + MID_W, 88)], fill=RULE)
     cells = [(n, t, 47, 55) for n, t in hdd] + [(n, t, 60, 70) for n, t in nvme]
-    CELL_W, PER_ROW, Y0 = 67, 4, 94
-    for i, (name, temp, warm, hot) in enumerate(cells[:12]):
-        cx = MID_X + (i % PER_ROW) * CELL_W
-        cy = Y0 + (i // PER_ROW) * 18
-        d.text((cx, cy), name, font=f_sml, fill=DIM)
-        d.text((cx + d.textlength(name + " ", font=f_sml), cy), str(temp),
-               font=f_sml, fill=heat(temp, warm, hot))
+    CELL, PER, Y0 = 66, 4, 94
+    for i, (name, temp, warm, hot) in enumerate(cells[:8]):
+        px = x0 + (i % PER) * CELL
+        py = Y0 + (i // PER) * 20
+        col = heat(temp, warm, hot)
+        d.ellipse([px, py + 6, px + 6, py + 12], fill=col)
+        d.text((px + 11, py), name, font=l_xs, fill=LABEL)
+        d.text((px + 11, py + 8), str(temp), font=n_sm, fill=col)
 
-    # fans
-    d.line([(MID_X, 132), (MID_X + MID_W, 132)], fill=RULE)
-    d.text((MID_X, 140), "FANS", font=f_tiny, fill=GREY)
-    for lab, (rpm, pwm), x in zip(("D1", "D2", "CPU"),
-                                  fans() or [(None, None)] * 3,
-                                  (MID_X + 44, MID_X + 130, MID_X + 208)):
-        col = (90, 220, 130) if rpm else (255, 70, 60)
-        d.text((x, 148), lab, font=f_tiny, fill=DIM)
-        d.text((x, 134), f"{rpm if rpm is not None else 0}", font=f_sml, fill=col)
+    fy = 140
+    d.text((x0, fy + 3), "FANS", font=l_xs, fill=LABEL)
+    for lab, (rpm, pwm), px in zip(("D1", "D2", "CPU"),
+                                   fans() or [(None, None)] * 3,
+                                   (x0 + 46, x0 + 130, x0 + 210)):
+        col = OK if rpm else HOT
+        d.text((px, fy + 4), lab, font=l_xs, fill=LABEL)
+        d.text((px + 26, fy), f"{rpm if rpm is not None else 0}", font=n_sm, fill=col)
 
-    # ---- right column ---------------------------------------------------
-    d.line([(SPLIT, 6), (SPLIT, CH - 6)], fill=RULE)
-    rtext(CW - 14, 2, socket.gethostname(), f_xl, (110, 175, 255))
-    rtext(CW - 14, 42, ip(), f_med, (188, 188, 200))
-    rtext(CW - 14, 68, f"up {uptime()}", f_sml, DIM)
-    rtext(CW - 14, 100, time.strftime("%H:%M:%S"), f_xl, TEXT)
+    # ---- card 3: identity -----------------------------------------------
+    rx = C3[2] - 16
+    rtext(rx, 16, socket.gethostname(), n_xl, ACCENT)
+    rtext(rx, 56, ip(), n_md, TEXT)
+    rtext(rx, 78, f"up {uptime()}", l_xs, LABEL)
+    rtext(rx, 102, time.strftime("%H:%M"), n_xl, TEXT)
+    rtext(rx, 142, time.strftime("%a %d %b"), l_xs, LABEL)
     return img
 
 
@@ -261,7 +267,7 @@ def blit(img):
 if __name__ == "__main__":
     once = "--once" in sys.argv
     hdd, tick = disk_temps(), 0
-    cpu_busy()                                        # prime the delta
+    cpu_busy()
     while True:
         try:
             if tick % SMART_EVERY == 0 and tick:

@@ -235,6 +235,8 @@ STORAGE  nv1 38                        |   20:33:00
          FANS  797    786    3558      |
 ```
 
+![Front panel](docs-lcd-panel.png)
+
 A capacity arc on the left, live CPU and memory meters in the middle, every drive
 temperature below them, and identity on the right. Storage is summed across all mounted
 real filesystems (`ext4`, `xfs`, `btrfs`, `zfs`, …), deduplicated by filesystem id, so
