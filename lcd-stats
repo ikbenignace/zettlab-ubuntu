@@ -31,12 +31,13 @@ def F(weight, size, fallback="Bold"):
 
 f_clock  = F("Bold", 14)          # 20:46 — matches the IP
 f_host   = F("ExtraBold", 14)     # NAS — matches the IP
-f_ip     = F("SemiBold", 14)      # 192.168.0.50
+f_ip     = F("SemiBold", 14)      # the address in the header
 f_val    = F("Bold", 23)          # 45 / 1.1
 f_val_sm = F("Bold", 16)          # 0% / 4%
 f_fan    = F("Bold", 16)          # 797
 f_drive  = F("Bold", 15)          # 41
-f_lbl    = F("SemiBold", 11)      # STORAGE / CPU / MEMORY / FANS
+f_lbl    = F("SemiBold", 11)      # header badge / uptime
+f_card   = F("SemiBold", 10)      # STORAGE / CPU / MEMORY / FANS titles
 f_tiny   = F("Medium", 8)         # USED / TOTAL / UTILIZATION / rpm
 f_unit   = F("SemiBold", 9)       # degrees, /28G
 f_cap    = F("Bold", 12)          # 14GB / 982GB
@@ -188,9 +189,38 @@ def temp_col(name, temp):
 HEALTH_COL = {"ok": GREEN, "warn": AMBER, "bad": RED, "unknown": GREY}
 
 
+def zpools():
+    """Pool capacity as zpool reports it.
+
+    statvfs is unusable for ZFS here: every dataset reports the whole pool's
+    free space, so summing mounts multiplies the pool, and the figure is
+    logical space inflated by the compression ratio rather than what the disks
+    actually hold.
+    """
+    out = {}
+    try:
+        r = subprocess.run(["zpool", "list", "-Hp", "-o", "name,size,alloc"],
+                           capture_output=True, text=True, timeout=5)
+        for line in r.stdout.splitlines():
+            f = line.split()
+            if len(f) == 3:
+                out[f[0]] = (int(f[2]), int(f[1]))
+    except Exception:
+        pass
+    return out
+
+
 def storage():
     used = total = 0
     seen = set()
+    # With a pool present the panel reports the pool alone; the system disk is
+    # not the storage anyone walks over to check.
+    pools = zpools()
+    if pools:
+        for pool_used, pool_total in pools.values():
+            used += pool_used
+            total += pool_total
+        return used, total
     for line in open("/proc/mounts"):
         p = line.split()
         if len(p) < 3 or p[2] not in REAL_FS:
@@ -224,7 +254,9 @@ def mem():
 def ip():
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("192.168.0.1", 80))
+        # No packet is sent; the kernel just picks the source address for
+        # this route. TEST-NET-1 keeps a real host out of it.
+        s.connect(("192.0.2.1", 80))
         a = s.getsockname()[0]
         s.close()
         return a
@@ -333,62 +365,55 @@ def frame(dr):
     cw_ = (total_w - gap * (n - 1)) // n
     xs = [M + i * (cw_ + gap) for i in range(n)]
 
+    def ring(x, icon, title, frac, ring_col, center, center_col, r0, r1):
+        card((x, ROW2_T, x + cw_, ROW2_B))
+        icon(x + 9, ROW2_T + 8)
+        d.text((x + 26, ROW2_T + 9), title, font=f_card, fill=WHITE)
+        rcx, rcy, rr = x + 36, ROW2_T + 47, 21
+        d.ellipse([rcx - rr, rcy - rr, rcx + rr, rcy + rr], outline=TRACK, width=6)
+        if frac > 0:
+            d.arc([rcx - rr, rcy - rr, rcx + rr, rcy + rr], -90,
+                  -90 + max(6, int(360 * min(frac, 1.0))), fill=ring_col, width=6)
+        ctext(rcx, rcy - 7, center, f_ring, center_col)
+        tx = x + 66
+        d.text((tx, ROW2_T + 23), r0[0], font=f_tiny, fill=GREY)
+        d.text((tx, ROW2_T + 31), r0[1], font=f_cap, fill=r0[2])
+        d.line([(tx, ROW2_T + 48), (x + cw_ - 10, ROW2_T + 48)], fill=DIVIDER)
+        d.text((tx, ROW2_T + 52), r1[0], font=f_tiny, fill=GREY)
+        d.text((tx, ROW2_T + 60), r1[1], font=f_cap, fill=r1[2])
+
+    def pct_col(f):
+        return RED if f > .9 else AMBER if f > .75 else GREEN
+
     # storage
-    x = xs[0]
-    card((x, ROW2_T, x + cw_, ROW2_B))
-    ic_storage(x + 9, ROW2_T + 8)
-    d.text((x + 26, ROW2_T + 8), "STORAGE", font=f_lbl, fill=WHITE)
     used, tot = storage()
-    frac = used / tot if tot else 0
-    rcx, rcy, rr = x + 36, ROW2_T + 47, 21
-    d.ellipse([rcx - rr, rcy - rr, rcx + rr, rcy + rr], outline=TRACK, width=6)
-    if frac > 0:
-        col = RED if frac > .9 else AMBER if frac > .75 else GREEN
-        d.arc([rcx - rr, rcy - rr, rcx + rr, rcy + rr], -90,
-              -90 + max(6, int(360 * frac)), fill=col, width=6)
-    ctext(rcx, rcy - 7, f"{frac * 100:.0f}%", f_ring, WHITE)
-    tx = x + 66
-    d.text((tx, ROW2_T + 23), "USED", font=f_tiny, fill=GREY)
-    d.text((tx, ROW2_T + 31), human(used), font=f_cap, fill=WHITE)
-    d.line([(tx, ROW2_T + 48), (x + cw_ - 10, ROW2_T + 48)], fill=DIVIDER)
-    d.text((tx, ROW2_T + 52), "TOTAL", font=f_tiny, fill=GREY)
-    d.text((tx, ROW2_T + 60), human(tot), font=f_cap, fill=WHITE)
+    sfrac = used / tot if tot else 0
+    ring(xs[0], ic_storage, "STORAGE", sfrac, pct_col(sfrac),
+         f"{sfrac * 100:.0f}%", WHITE,
+         ("USED", human(used), WHITE), ("TOTAL", human(tot), WHITE))
 
     # cpu
-    x = xs[1]
-    card((x, ROW2_T, x + cw_, ROW2_B))
-    ic_cpu(x + 9, ROW2_T + 7)
-    d.text((x + 26, ROW2_T + 8), "CPU", font=f_lbl, fill=WHITE)
     ct, busy = cpu_temp(), cpu_busy()
-    cv = f"{ct:.0f}" if ct else "--"
-    d.text((x + 10, ROW2_T + 28), cv, font=f_val, fill=cpu_col(ct))
-    d.text((x + 12 + tw(cv, f_val), ROW2_T + 38), "°C", font=f_unit, fill=cpu_col(ct))
-    dv = x + int(cw_ * 0.64)
-    d.line([(dv, ROW2_T + 24), (dv, ROW2_T + 54)], fill=DIVIDER)
-    d.text((dv + 9, ROW2_T + 26), "USAGE", font=f_tiny, fill=GREY)
-    d.text((dv + 9, ROW2_T + 35), f"{busy:.0f}%", font=f_val_sm, fill=WHITE)
-    bar(x + 10, ROW2_T + 62, cw_ - 20, 6, busy / 100, GREEN)
+    try:
+        load = os.getloadavg()[0]
+    except OSError:
+        load = 0.0
+    ring(xs[1], ic_cpu, "CPU", busy / 100, GREEN, f"{busy:.0f}%", WHITE,
+         ("TEMP", f"{ct:.0f}°C" if ct else "--", cpu_col(ct)),
+         ("LOAD", f"{load:.2f}", WHITE))
 
     # memory
-    x = xs[2]
-    card((x, ROW2_T, x + cw_, ROW2_B))
-    ic_mem(x + 9, ROW2_T + 7)
-    d.text((x + 26, ROW2_T + 8), "MEMORY", font=f_lbl, fill=WHITE)
     mu, mt = mem()
-    mv = f"{mu:.1f}"
-    d.text((x + 10, ROW2_T + 28), mv, font=f_val, fill=WHITE)
-    d.text((x + 12 + tw(mv, f_val), ROW2_T + 38), f"/{mt:.0f}G", font=f_unit, fill=GREY)
-    dv = x + int(cw_ * 0.64)
-    d.line([(dv, ROW2_T + 24), (dv, ROW2_T + 54)], fill=DIVIDER)
-    d.text((dv + 9, ROW2_T + 26), "USAGE", font=f_tiny, fill=GREY)
-    d.text((dv + 9, ROW2_T + 35), f"{100 * mu / mt:.0f}%", font=f_val_sm, fill=WHITE)
-    bar(x + 10, ROW2_T + 62, cw_ - 20, 6, mu / mt, GREEN)
+    mfrac = mu / mt if mt else 0
+    ring(xs[2], ic_mem, "MEMORY", mfrac, pct_col(mfrac),
+         f"{mfrac * 100:.0f}%", WHITE,
+         ("USED", f"{mu:.1f}G", WHITE), ("TOTAL", f"{mt:.0f}G", WHITE))
 
     # fans
     x = xs[3]
     card((x, ROW2_T, x + cw_, ROW2_B))
     ic_fan(x + 8, ROW2_T + 7)
-    d.text((x + 26, ROW2_T + 8), "FANS", font=f_lbl, fill=WHITE)
+    d.text((x + 26, ROW2_T + 9), "FANS", font=f_card, fill=WHITE)
     fl = fans()
     colw = (cw_ - 16) // 3
     for i, (lab, (rpm, pwm)) in enumerate(zip(("D1", "D2", "CPU"), fl)):
