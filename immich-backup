@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+# Pull an immich backup from the host that runs it: a full SQL dump plus the
+# photo library. Runs on the NAS and connects outward, so the immich host is
+# never given credentials for the backup target.
+#
+# The database container is a Swarm task, so its name carries a generated
+# suffix that changes on every restart -- resolve it by prefix each run.
+set -euo pipefail
+
+# Point these at your own host before first run, or override them in the
+# systemd unit with Environment= lines.
+IMMICH_HOST="${IMMICH_HOST:?set IMMICH_HOST, e.g. user@192.0.2.10}"
+IMMICH_KEY="${IMMICH_KEY:?set IMMICH_KEY, e.g. /root/.ssh/id_ed25519}"
+IMMICH_LIBRARY="${IMMICH_LIBRARY:-/srv/immich/volumes/photos}"
+OWNER="${OWNER:-root:root}"
+
+DEST_DB="${DEST_DB:-/tank/backups/immich/db}"
+DEST_LIB="${DEST_LIB:-/tank/backups/immich/library}"
+DATASET="${DATASET:-tank/backups/immich}"
+KEEP_DUMPS="${KEEP_DUMPS:-14}"
+
+SSH=(ssh -o BatchMode=yes -o ConnectTimeout=15 -i "$IMMICH_KEY" "$IMMICH_HOST")
+stamp=$(date +%Y%m%d-%H%M%S)
+dump="$DEST_DB/immich-$stamp.sql.gz"
+
+log() { printf '%s %s\n' "$(date +%H:%M:%S)" "$*"; }
+
+log "resolving database container"
+container=$("${SSH[@]}" 'sudo docker ps --filter name=immich_db --format "{{.Names}}" | head -1')
+[ -n "$container" ] || { log "FAIL: no immich_db container running on $IMMICH_HOST"; exit 1; }
+log "container $container"
+
+mkdir -p "$DEST_DB" "$DEST_LIB"
+
+# Stream the dump straight here; nothing large is written on the immich host.
+log "dumping database"
+"${SSH[@]}" "sudo docker exec -t '$container' pg_dumpall --clean --if-exists --username=postgres" \
+    | gzip > "$dump.part"
+
+# A dump that failed midway still produces a file, so require plausible size
+# and a valid gzip trailer before accepting it.
+size=$(stat -c %s "$dump.part")
+if [ "$size" -lt 1000000 ] || ! gzip -t "$dump.part" 2>/dev/null; then
+    log "FAIL: dump is truncated or corrupt ($size bytes)"
+    rm -f "$dump.part"
+    exit 1
+fi
+mv "$dump.part" "$dump"
+log "dump ok ($(numfmt --to=iec "$size"))"
+
+log "syncing library"
+rsync -a --delete --stats \
+    --chown="$OWNER" --chmod=D755,F644 \
+    -e "ssh -o BatchMode=yes -i $IMMICH_KEY" \
+    "$IMMICH_HOST:$IMMICH_LIBRARY/" "$DEST_LIB/" \
+    | grep -E "Number of files|Total file size|transferred" || true
+
+# Snapshot after both parts land, so the snapshot is always self-consistent.
+zfs snapshot "$DATASET@$stamp"
+log "snapshot $DATASET@$stamp"
+
+# Old dumps are redundant once snapshots exist, but a few on disk make
+# restores quicker than rolling back.
+ls -1t "$DEST_DB"/immich-*.sql.gz 2>/dev/null | tail -n +$((KEEP_DUMPS + 1)) | while read -r old; do
+    log "pruning $(basename "$old")"
+    rm -f "$old"
+done
+
+log "done"
